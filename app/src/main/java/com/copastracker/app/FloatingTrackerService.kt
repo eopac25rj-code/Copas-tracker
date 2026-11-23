@@ -18,6 +18,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -31,6 +32,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import java.io.File
+import java.io.FileOutputStream
 
 class FloatingTrackerService : Service() {
 
@@ -246,14 +249,20 @@ class FloatingTrackerService : Service() {
                         image.close()
 
                         val isBlack = isBitmapMostlyBlack(bitmap)
-                        bitmap.recycle()
-
                         if (isBlack) {
+                            bitmap.recycle()
                             lastCaptureStatus = "PRETA"
                             showToast("Ecrã preto (bloqueado pelo jogo)")
                         } else {
-                            lastCaptureStatus = "OK"
-                            showToast("Captura OK! Ecrã visível")
+                            val savedFile = saveBitmapToPng(bitmap)
+                            bitmap.recycle()
+                            if (savedFile != null) {
+                                lastCaptureStatus = "SALVO"
+                                showToast("Guardado: ${savedFile.name}")
+                            } else {
+                                lastCaptureStatus = "ERR_SAVE"
+                                showToast("Captura OK, mas falhou ao guardar PNG")
+                            }
                         }
                     } else {
                         lastCaptureStatus = "SEM_FRAME"
@@ -274,6 +283,26 @@ class FloatingTrackerService : Service() {
             lastCaptureStatus = "ERR_VD"
             updateCounterText()
             showToast("Erro VD: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    private fun saveBitmapToPng(bitmap: Bitmap): File? {
+        return try {
+            val baseDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: filesDir
+            val outDir = File(baseDir, "CopasTracker")
+            if (!outDir.exists() && !outDir.mkdirs()) {
+                return null
+            }
+            val file = File(outDir, "mesa_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    return null
+                }
+                out.flush()
+            }
+            file
+        } catch (_: Exception) {
+            null
         }
     }
 
