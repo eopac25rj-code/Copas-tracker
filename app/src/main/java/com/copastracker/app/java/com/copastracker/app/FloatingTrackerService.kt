@@ -17,6 +17,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 class FloatingTrackerService : Service() {
@@ -29,6 +30,7 @@ class FloatingTrackerService : Service() {
     private val undoStack = ArrayDeque<Set<String>>()
     private val cardButtons = mutableMapOf<String, Button>()
     private var counterTextView: TextView? = null
+    private var suitsCounterTextView: TextView? = null
     private var bodyContainer: View? = null
     private var resetButton: Button? = null
     private var undoButton: Button? = null
@@ -36,8 +38,7 @@ class FloatingTrackerService : Service() {
 
     // Ordem com o Ás (A) por último
     private val displayRanks = listOf("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
-    // Menos naipes aparecendo para deixar mais compacto e com botões maiores
-    private val displaySuits = listOf("♠", "♥", "♦")
+    private val displaySuits = listOf("♠", "♥", "♦", "♣")
 
     private var pendingClearConfirmation = false
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -64,7 +65,7 @@ class FloatingTrackerService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val panelWidthDp = 168
+        val panelWidthDp = 212
 
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -74,18 +75,18 @@ class FloatingTrackerService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 20
-            y = 16
+            x = 24
+            y = 24
         }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E612161F"))
-                cornerRadius = dpToPx(12).toFloat()
+                cornerRadius = dpToPx(14).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#3B82F6"))
             }
-            setPadding(dpToPx(6), dpToPx(5), dpToPx(6), dpToPx(6))
+            setPadding(dpToPx(8), dpToPx(6), dpToPx(8), dpToPx(8))
         }
 
         val header = LinearLayout(this).apply {
@@ -95,12 +96,12 @@ class FloatingTrackerService : Service() {
                 dpToPx(panelWidthDp),
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(3))
+            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(2))
         }
 
         val titleAndCount = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 10f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(
                 0,
@@ -112,37 +113,37 @@ class FloatingTrackerService : Service() {
 
         val minimizeBtn = Button(this).apply {
             text = "—"
-            textSize = 9.5f
+            textSize = 10f
             setTextColor(Color.WHITE)
             background = makePillDrawable(
                 fillColor = "#2563EB",
                 strokeColor = "#93C5FD",
-                radiusDp = 5
+                radiusDp = 6
             )
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            val lp = LinearLayout.LayoutParams(dpToPx(24), dpToPx(20))
-            lp.marginEnd = dpToPx(8)
+            val lp = LinearLayout.LayoutParams(dpToPx(28), dpToPx(22))
+            lp.marginEnd = dpToPx(10)
             layoutParams = lp
             setPadding(0, 0, 0, 0)
         }
 
         val closeBtn = Button(this).apply {
             text = "✕"
-            textSize = 9.5f
+            textSize = 10f
             setTextColor(Color.WHITE)
             background = makePillDrawable(
                 fillColor = "#991B1B",
                 strokeColor = "#FCA5A5",
-                radiusDp = 5
+                radiusDp = 6
             )
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            layoutParams = LinearLayout.LayoutParams(dpToPx(24), dpToPx(20))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(28), dpToPx(22))
             setPadding(0, 0, 0, 0)
         }
 
@@ -158,7 +159,41 @@ class FloatingTrackerService : Service() {
             )
         }
 
+        // Contador de cartas restantes por naipe
+        val suitsCounter = TextView(this).apply {
+            setTextColor(Color.parseColor("#CBD5E1"))
+            textSize = 9.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(4)
+            }
+        }
+        suitsCounterTextView = suitsCounter
+        body.addView(suitsCounter)
+
         val colCount = displaySuits.size
+        val horizontalGapDp = 4
+        val verticalGapDp = 3
+        val totalHorizontalGapDp = horizontalGapDp * 2 * colCount
+        val btnWidthDp = ((panelWidthDp - totalHorizontalGapDp) / colCount).coerceAtLeast(40)
+        val btnHeightDp = 24
+
+        // Altura limitada a ~6 linhas para manter o painel compacto como no modelo antigo
+        val visibleRows = 6
+        val scrollHeightDp = visibleRows * (btnHeightDp + verticalGapDp * 2) + 4
+
+        val scrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dpToPx(scrollHeightDp)
+            )
+            isVerticalScrollBarEnabled = true
+        }
+
         val grid = GridLayout(this).apply {
             columnCount = colCount
             rowCount = displayRanks.size
@@ -168,19 +203,12 @@ class FloatingTrackerService : Service() {
             )
         }
 
-        // Vão maior entre os naipes (esquerda/direita) e altura compacta
-        val horizontalGapDp = 5
-        val verticalGapDp = 2
-        val totalHorizontalGapDp = horizontalGapDp * 2 * colCount
-        val btnWidthDp = ((panelWidthDp - totalHorizontalGapDp) / colCount).coerceAtLeast(32)
-        val btnHeightDp = 18
-
         for (rank in displayRanks) {
             for (suit in displaySuits) {
                 val cardId = "$rank$suit"
                 val btn = Button(this).apply {
                     text = cardId
-                    textSize = 9f
+                    textSize = 10f
                     typeface = Typeface.DEFAULT_BOLD
                     minimumWidth = 0
                     minWidth = 0
@@ -207,7 +235,8 @@ class FloatingTrackerService : Service() {
             }
         }
 
-        body.addView(grid)
+        scrollView.addView(grid)
+        body.addView(scrollView)
 
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -215,23 +244,23 @@ class FloatingTrackerService : Service() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                topMargin = dpToPx(4)
+                topMargin = dpToPx(6)
             }
         }
 
         val undoBtn = Button(this).apply {
-            text = "Desfazer"
-            textSize = 9f
+            text = "DESFAZER"
+            textSize = 9.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(
                 0,
-                dpToPx(24),
+                dpToPx(28),
                 1f
             ).apply {
-                marginEnd = dpToPx(3)
+                marginEnd = dpToPx(4)
             }
-            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
+            setPadding(dpToPx(4), dpToPx(2), dpToPx(4), dpToPx(2))
             setOnClickListener {
                 undoLastAction()
             }
@@ -239,17 +268,17 @@ class FloatingTrackerService : Service() {
         undoButton = undoBtn
 
         val resetBtn = Button(this).apply {
-            textSize = 9f
+            textSize = 9.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(
                 0,
-                dpToPx(24),
-                1.15f
+                dpToPx(28),
+                1.25f
             ).apply {
-                marginStart = dpToPx(3)
+                marginStart = dpToPx(4)
             }
-            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
+            setPadding(dpToPx(4), dpToPx(2), dpToPx(4), dpToPx(2))
             setOnClickListener {
                 handleResetClick()
             }
@@ -337,14 +366,14 @@ class FloatingTrackerService : Service() {
             btn.background = makePillDrawable(
                 fillColor = "#1E3A8A",
                 strokeColor = "#93C5FD",
-                radiusDp = 5
+                radiusDp = 6
             )
         } else {
             btn.alpha = 0.45f
             btn.background = makePillDrawable(
                 fillColor = "#1F2937",
                 strokeColor = "#4B5563",
-                radiusDp = 5
+                radiusDp = 6
             )
         }
     }
@@ -374,18 +403,19 @@ class FloatingTrackerService : Service() {
     private fun updateResetButtonAppearance() {
         val btn = resetButton ?: return
         if (pendingClearConfirmation) {
-            btn.text = "Confirmar?"
+            btn.text = "CONFIRMAR?"
             btn.background = makePillDrawable(
                 fillColor = "#D97706",
                 strokeColor = "#FDE68A",
-                radiusDp = 5
+                radiusDp = 6
             )
         } else {
-            btn.text = "Limpar (52)"
+            val remaining = 52 - playedCards.size
+            btn.text = "LIMPAR ($remaining)"
             btn.background = makePillDrawable(
                 fillColor = "#16A34A",
                 strokeColor = "#86EFAC",
-                radiusDp = 5
+                radiusDp = 6
             )
         }
     }
@@ -410,7 +440,7 @@ class FloatingTrackerService : Service() {
             btn.background = makePillDrawable(
                 fillColor = "#DC2626",
                 strokeColor = "#FECACA",
-                radiusDp = 5
+                radiusDp = 6
             )
             btn.setTextColor(Color.WHITE)
             btn.alpha = 1.0f
@@ -418,7 +448,7 @@ class FloatingTrackerService : Service() {
             btn.background = makePillDrawable(
                 fillColor = "#15803D",
                 strokeColor = "#86EFAC",
-                radiusDp = 5
+                radiusDp = 6
             )
             btn.setTextColor(Color.WHITE)
             btn.alpha = 1.0f
@@ -437,9 +467,19 @@ class FloatingTrackerService : Service() {
         }
     }
 
+    private fun remainingForSuit(suit: String): Int {
+        val playedInSuit = playedCards.count { it.endsWith(suit) }
+        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
+    }
+
     private fun updateCounterText() {
         val remaining = 52 - playedCards.size
         counterTextView?.text = "Copas • $remaining/52"
+        suitsCounterTextView?.text =
+            "♠ ${remainingForSuit("♠")}  ♥ ${remainingForSuit("♥")}  ♦ ${remainingForSuit("♦")}  ♣ ${remainingForSuit("♣")}"
+        if (!pendingClearConfirmation) {
+            updateResetButtonAppearance()
+        }
     }
 
     private fun dpToPx(dp: Int): Int {
