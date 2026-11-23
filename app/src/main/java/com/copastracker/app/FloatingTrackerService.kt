@@ -60,6 +60,7 @@ class FloatingTrackerService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var isCapturingFrame = false
+    private var lastCaptureStatus = "OFF"
 
     private val displayRanks = listOf("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
     private val displaySuits = listOf("♠", "♥", "♦", "♣")
@@ -95,6 +96,8 @@ class FloatingTrackerService : Service() {
             if (resultCode != -999 && dataIntent != null) {
                 startProjection(resultCode, dataIntent)
             } else {
+                lastCaptureStatus = "SEM_PERM"
+                updateCounterText()
                 showToast("Permissão não retornou dados (code=$resultCode)")
             }
         }
@@ -116,7 +119,7 @@ class FloatingTrackerService : Service() {
     private fun buildProjectionNotification(): Notification {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("CopasTracker ativo")
-            .setContentText("Teste de captura de tela pronto")
+            .setContentText("Captura de tela pronta")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
@@ -135,7 +138,9 @@ class FloatingTrackerService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            showToast("Erro no serviço foreground: ${e.javaClass.simpleName}")
+            lastCaptureStatus = "ERR_FG"
+            updateCounterText()
+            showToast("Erro foreground: ${e.javaClass.simpleName}")
             return
         }
 
@@ -148,6 +153,8 @@ class FloatingTrackerService : Service() {
                 getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val mp = projectionManager.getMediaProjection(resultCode, dataIntent)
             if (mp == null) {
+                lastCaptureStatus = "MP_NULL"
+                updateCounterText()
                 showToast("MediaProjection veio nulo")
                 return
             }
@@ -155,30 +162,41 @@ class FloatingTrackerService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 mp.registerCallback(object : MediaProjection.Callback() {
                     override fun onStop() {
+                        lastCaptureStatus = "PAROU"
+                        updateCounterText()
                         stopProjectionResources()
                     }
                 }, uiHandler)
             }
 
             mediaProjection = mp
+            lastCaptureStatus = "ON"
+            updateCounterText()
             showToast("Captura pronta! Toque em FOTO")
         } catch (e: Exception) {
-            showToast("Erro ao pegar projeção: ${e.javaClass.simpleName}")
+            lastCaptureStatus = "ERR_MP"
+            updateCounterText()
+            showToast("Erro projeção: ${e.javaClass.simpleName}")
         }
     }
 
     private fun testSingleFrameCapture() {
         val mp = mediaProjection
         if (mp == null) {
-            showToast("Captura ainda não ativa — toque em Ativar Captura")
+            lastCaptureStatus = "OFF"
+            updateCounterText()
+            showToast("Sem captura ativa! Abra o app e toque em Ativar Captura")
             return
         }
         if (isCapturingFrame) {
-            showToast("Capturando frame...")
+            lastCaptureStatus = "LENDO..."
+            updateCounterText()
             return
         }
 
         isCapturingFrame = true
+        lastCaptureStatus = "LENDO..."
+        updateCounterText()
 
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
@@ -214,23 +232,30 @@ class FloatingTrackerService : Service() {
                         bitmap.recycle()
 
                         if (isBlack) {
+                            lastCaptureStatus = "PRETA"
                             showToast("Tela preta (bloqueado pelo jogo)")
                         } else {
+                            lastCaptureStatus = "OK"
                             showToast("Captura OK! Tela visível")
                         }
                     } else {
+                        lastCaptureStatus = "SEM_FRAME"
                         showToast("Sem frame ainda, tente FOTO de novo")
                     }
                 } catch (e: Exception) {
+                    lastCaptureStatus = "ERR_FRAME"
                     showToast("Erro ao ler frame: ${e.javaClass.simpleName}")
                 } finally {
                     stopProjectionResources()
                     isCapturingFrame = false
+                    updateCounterText()
                 }
             }, 350L)
         } catch (e: Exception) {
             stopProjectionResources()
             isCapturingFrame = false
+            lastCaptureStatus = "ERR_VD"
+            updateCounterText()
             showToast("Erro virtualDisplay: ${e.javaClass.simpleName}")
         }
     }
@@ -339,7 +364,7 @@ class FloatingTrackerService : Service() {
 
         val titleAndCount = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 10f
+            textSize = 9.5f
             typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(
                 0,
@@ -735,7 +760,7 @@ class FloatingTrackerService : Service() {
 
     private fun updateCounterText() {
         val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • $remaining/52"
+        counterTextView?.text = "Copas • $remaining/52 • $lastCaptureStatus"
         for (suit in displaySuits) {
             suitCounterViews[suit]?.text = "$suit ${remainingForSuit(suit)}"
         }
