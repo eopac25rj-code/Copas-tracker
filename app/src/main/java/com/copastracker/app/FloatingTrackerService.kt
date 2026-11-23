@@ -256,11 +256,25 @@ class FloatingTrackerService : Service() {
                             lastCaptureStatus = "PRETA"
                             showToast("Tela preta (bloqueado pelo jogo)")
                         } else {
-                            val savedLabel = saveBitmapToGallery(bitmap)
+                            val stamp = System.currentTimeMillis()
+                            val fullSaved = saveBitmapToGallery(bitmap, "mesa_$stamp.png")
+                            val centerBitmap = cropCenterRegion(bitmap)
                             bitmap.recycle()
-                            if (savedLabel != null) {
+
+                            val centerSaved = if (centerBitmap != null) {
+                                val name = saveBitmapToGallery(centerBitmap, "centro_$stamp.png")
+                                centerBitmap.recycle()
+                                name
+                            } else {
+                                null
+                            }
+
+                            if (fullSaved != null && centerSaved != null) {
                                 lastCaptureStatus = "SALVO"
-                                showToast("Salvo na Galeria: $savedLabel")
+                                showToast("Salvo mesa + recorte do centro!")
+                            } else if (fullSaved != null) {
+                                lastCaptureStatus = "SALVO"
+                                showToast("Salvo: $fullSaved")
                             } else {
                                 lastCaptureStatus = "ERR_SAVE"
                                 showToast("Captura OK, mas falhou ao salvar imagem")
@@ -284,12 +298,20 @@ class FloatingTrackerService : Service() {
             isCapturingFrame = false
             lastCaptureStatus = "ERR_VD"
             updateCounterText()
-            showToast("Erro VD: ${e.javaClass.simpleName}:${e.message}")
+            showToast("Erro VD: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
-    private fun saveBitmapToGallery(bitmap: Bitmap): String? {
-        val fileName = "mesa_${System.currentTimeMillis()}.png"
+    private fun cropCenterRegion(source: Bitmap): Bitmap? {
+        if (source.width <= 1 || source.height <= 1) return null
+        val left = (source.width * 0.34f).toInt().coerceIn(0, source.width - 1)
+        val top = (source.height * 0.24f).toInt().coerceIn(0, source.height - 1)
+        val right = (source.width * 0.66f).toInt().coerceIn(left + 1, source.width)
+        val bottom = (source.height * 0.62f).toInt().coerceIn(top + 1, source.height)
+        return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
+    }
+
+    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
