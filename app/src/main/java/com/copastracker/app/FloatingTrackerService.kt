@@ -95,7 +95,7 @@ class FloatingTrackerService : Service() {
             if (resultCode != -999 && dataIntent != null) {
                 startProjection(resultCode, dataIntent)
             } else {
-                showToast("Falha ao receber permissão de tela")
+                showToast("Permissão não retornou dados (code=$resultCode)")
             }
         }
         return START_STICKY
@@ -134,32 +134,47 @@ class FloatingTrackerService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+        } catch (e: Exception) {
+            showToast("Erro no serviço foreground: ${e.javaClass.simpleName}")
+            return
+        }
 
+        try {
             stopProjectionResources()
+            mediaProjection?.stop()
+            mediaProjection = null
 
             val projectionManager =
                 getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
+            val mp = projectionManager.getMediaProjection(resultCode, dataIntent)
+            if (mp == null) {
+                showToast("MediaProjection veio nulo")
+                return
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                mp.registerCallback(object : MediaProjection.Callback() {
                     override fun onStop() {
                         stopProjectionResources()
                     }
                 }, uiHandler)
             }
 
-            showToast("Captura de tela pronta! Toque em FOTO no jogo")
+            mediaProjection = mp
+            showToast("Captura pronta! Toque em FOTO")
         } catch (e: Exception) {
-            showToast("Erro ao iniciar captura: ${e.message}")
+            showToast("Erro ao pegar projeção: ${e.javaClass.simpleName}")
         }
     }
 
     private fun testSingleFrameCapture() {
-        if (isCapturingFrame) return
         val mp = mediaProjection
         if (mp == null) {
-            showToast("Permissão de tela ainda não ativada")
+            showToast("Captura ainda não ativa — toque em Ativar Captura")
+            return
+        }
+        if (isCapturingFrame) {
+            showToast("Capturando frame...")
             return
         }
 
@@ -172,46 +187,52 @@ class FloatingTrackerService : Service() {
 
         stopProjectionResources()
 
-        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        val display = mp.createVirtualDisplay(
-            "CopasTestCapture",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader.surface,
-            null,
-            null
-        )
+        try {
+            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            val display = mp.createVirtualDisplay(
+                "CopasTestCapture",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface,
+                null,
+                null
+            )
 
-        imageReader = reader
-        virtualDisplay = display
+            imageReader = reader
+            virtualDisplay = display
 
-        uiHandler.postDelayed({
-            try {
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    val bitmap = imageToBitmap(image, width, height)
-                    image.close()
+            uiHandler.postDelayed({
+                try {
+                    val image = reader.acquireLatestImage()
+                    if (image != null) {
+                        val bitmap = imageToBitmap(image, width, height)
+                        image.close()
 
-                    val isBlack = isBitmapMostlyBlack(bitmap)
-                    bitmap.recycle()
+                        val isBlack = isBitmapMostlyBlack(bitmap)
+                        bitmap.recycle()
 
-                    if (isBlack) {
-                        showToast("Tela preta (bloqueado pelo jogo)")
+                        if (isBlack) {
+                            showToast("Tela preta (bloqueado pelo jogo)")
+                        } else {
+                            showToast("Captura OK! Tela visível")
+                        }
                     } else {
-                        showToast("Captura OK! Tela visível")
+                        showToast("Sem frame ainda, tente FOTO de novo")
                     }
-                } else {
-                    showToast("Sem frame agora, tente FOTO de novo")
+                } catch (e: Exception) {
+                    showToast("Erro ao ler frame: ${e.javaClass.simpleName}")
+                } finally {
+                    stopProjectionResources()
+                    isCapturingFrame = false
                 }
-            } catch (e: Exception) {
-                showToast("Erro no teste: ${e.message}")
-            } finally {
-                stopProjectionResources()
-                isCapturingFrame = false
-            }
-        }, 300L)
+            }, 350L)
+        } catch (e: Exception) {
+            stopProjectionResources()
+            isCapturingFrame = false
+            showToast("Erro virtualDisplay: ${e.javaClass.simpleName}")
+        }
     }
 
     private fun imageToBitmap(image: android.media.Image, width: Int, height: Int): Bitmap {
@@ -270,7 +291,7 @@ class FloatingTrackerService : Service() {
 
     private fun showToast(message: String) {
         uiHandler.post {
-            Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -439,303 +460,4 @@ class FloatingTrackerService : Service() {
             columnCount = colCount
             rowCount = displayRanks.size
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        for (rank in displayRanks) {
-            for (suit in displaySuits) {
-                val cardId = "$rank$suit"
-                val btn = Button(this).apply {
-                    text = cardId
-                    textSize = 10.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    minimumWidth = 0
-                    minWidth = 0
-                    minimumHeight = 0
-                    minHeight = 0
-                    setPadding(0, 0, 0, 0)
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = dpToPx(btnWidthDp)
-                        height = dpToPx(btnHeightDp)
-                        setMargins(
-                            dpToPx(horizontalGapDp),
-                            dpToPx(verticalGapDp),
-                            dpToPx(horizontalGapDp),
-                            dpToPx(verticalGapDp)
-                        )
-                    }
-                    setOnClickListener {
-                        toggleCard(cardId)
-                    }
-                }
-                cardButtons[cardId] = btn
-                grid.addView(btn)
-                updateCardButtonStyle(cardId)
-            }
-        }
-
-        body.addView(grid)
-
-        val actionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dpToPx(3)
-            }
-        }
-
-        val undoBtn = Button(this).apply {
-            text = "DESFAZER"
-            textSize = 9f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dpToPx(22),
-                1f
-            ).apply {
-                marginEnd = dpToPx(3)
-            }
-            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
-            setOnClickListener {
-                undoLastAction()
-            }
-        }
-        undoButton = undoBtn
-
-        val resetBtn = Button(this).apply {
-            textSize = 9f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dpToPx(22),
-                1.15f
-            ).apply {
-                marginStart = dpToPx(3)
-            }
-            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(1))
-            setOnClickListener {
-                handleResetClick()
-            }
-        }
-        resetButton = resetBtn
-
-        actionsRow.addView(undoBtn)
-        actionsRow.addView(resetBtn)
-        body.addView(actionsRow)
-
-        bodyContainer = body
-        root.addView(header)
-        root.addView(body)
-
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-
-        header.setOnTouchListener { _, event ->
-            val params = layoutParams ?: return@setOnTouchListener false
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    params.x = initialX + (event.rawX - initialTouchX).toInt()
-                    params.y = initialY + (event.rawY - initialTouchY).toInt()
-                    windowManager.updateViewLayout(floatingView, params)
-                    true
-                }
-                else -> false
-            }
-        }
-
-        minimizeBtn.setOnClickListener {
-            isMinimized = !isMinimized
-            bodyContainer?.visibility = if (isMinimized) View.GONE else View.VISIBLE
-            minimizeBtn.text = if (isMinimized) "+" else "—"
-        }
-
-        closeBtn.setOnClickListener {
-            stopSelf()
-        }
-
-        updateResetButtonAppearance()
-        updateUndoButtonAppearance()
-        updateCounterText()
-        floatingView = root
-        windowManager.addView(floatingView, layoutParams)
-    }
-
-    private fun pushUndoSnapshot() {
-        undoStack.addLast(playedCards.toSet())
-        if (undoStack.size > 30) {
-            undoStack.removeFirst()
-        }
-        updateUndoButtonAppearance()
-    }
-
-    private fun undoLastAction() {
-        if (undoStack.isEmpty()) return
-        val previousState = undoStack.removeLast()
-        playedCards.clear()
-        playedCards.addAll(previousState)
-        cardStorage.savePlayedCards(playedCards)
-
-        for (id in cardButtons.keys) {
-            updateCardButtonStyle(id)
-        }
-        updateCounterText()
-        updateUndoButtonAppearance()
-    }
-
-    private fun updateUndoButtonAppearance() {
-        val btn = undoButton ?: return
-        val hasHistory = undoStack.isNotEmpty()
-        btn.isEnabled = hasHistory
-        if (hasHistory) {
-            btn.alpha = 1.0f
-            btn.background = makePillDrawable(
-                fillColor = "#1E3A8A",
-                strokeColor = "#93C5FD",
-                radiusDp = 5
-            )
-        } else {
-            btn.alpha = 0.45f
-            btn.background = makePillDrawable(
-                fillColor = "#1F2937",
-                strokeColor = "#4B5563",
-                radiusDp = 5
-            )
-        }
-    }
-
-    private fun handleResetClick() {
-        if (!pendingClearConfirmation) {
-            pendingClearConfirmation = true
-            updateResetButtonAppearance()
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            uiHandler.postDelayed(clearTimeoutRunnable, 4000L)
-        } else {
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            pendingClearConfirmation = false
-            if (playedCards.isNotEmpty()) {
-                pushUndoSnapshot()
-                playedCards.clear()
-                cardStorage.clearPlayedCards()
-                for (id in cardButtons.keys) {
-                    updateCardButtonStyle(id)
-                }
-                updateCounterText()
-            }
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun updateResetButtonAppearance() {
-        val btn = resetButton ?: return
-        if (pendingClearConfirmation) {
-            btn.text = "CONFIRMAR?"
-            btn.background = makePillDrawable(
-                fillColor = "#D97706",
-                strokeColor = "#FDE68A",
-                radiusDp = 5
-            )
-        } else {
-            val remaining = 52 - playedCards.size
-            btn.text = "LIMPAR ($remaining)"
-            btn.background = makePillDrawable(
-                fillColor = "#16A34A",
-                strokeColor = "#86EFAC",
-                radiusDp = 5
-            )
-        }
-    }
-
-    private fun toggleCard(cardId: String) {
-        pushUndoSnapshot()
-        if (playedCards.contains(cardId)) {
-            playedCards.remove(cardId)
-        } else {
-            playedCards.add(cardId)
-        }
-        cardStorage.savePlayedCards(playedCards)
-        updateCardButtonStyle(cardId)
-        updateCounterText()
-    }
-
-    private fun updateCardButtonStyle(cardId: String) {
-        val btn = cardButtons[cardId] ?: return
-        val isPlayed = playedCards.contains(cardId)
-
-        if (isPlayed) {
-            btn.background = makePillDrawable(
-                fillColor = "#DC2626",
-                strokeColor = "#FECACA",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        } else {
-            btn.background = makePillDrawable(
-                fillColor = "#15803D",
-                strokeColor = "#86EFAC",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        }
-    }
-
-    private fun makePillDrawable(
-        fillColor: String,
-        strokeColor: String,
-        radiusDp: Int
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(Color.parseColor(fillColor))
-            cornerRadius = dpToPx(radiusDp).toFloat()
-            setStroke(dpToPx(1), Color.parseColor(strokeColor))
-        }
-    }
-
-    private fun remainingForSuit(suit: String): Int {
-        val playedInSuit = playedCards.count { it.endsWith(suit) }
-        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
-    }
-
-    private fun updateCounterText() {
-        val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • $remaining/52"
-        for (suit in displaySuits) {
-            suitCounterViews[suit]?.text = "$suit ${remainingForSuit(suit)}"
-        }
-        if (!pendingClearConfirmation) {
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
-    }
-
-    override fun onDestroy() {
-        uiHandler.removeCallbacks(clearTimeoutRunnable)
-        stopProjectionResources()
-        mediaProjection?.stop()
-        mediaProjection = null
-        super.onDestroy()
-        floatingView?.let {
-            windowManager.removeView(it)
-            floatingView = null
-        }
-    }
-}
+                LinearLayout.LayoutParams
