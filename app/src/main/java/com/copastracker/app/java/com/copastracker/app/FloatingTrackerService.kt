@@ -14,7 +14,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.GridLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -57,56 +56,56 @@ class FloatingTrackerService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 40
-            y = 140
+            x = 24
+            y = 80
         }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E612161F"))
-                cornerRadius = 28f
-                setStroke(3, Color.parseColor("#3B82F6"))
+                cornerRadius = 20f
+                setStroke(2, Color.parseColor("#3B82F6"))
             }
-            setPadding(16, 14, 16, 16)
+            setPadding(dpToPx(8), dpToPx(6), dpToPx(8), dpToPx(8))
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 2, 4, 8)
+            setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(4))
         }
 
         val titleAndCount = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 12, 0)
+            setPadding(0, 0, dpToPx(8), 0)
         }
         counterTextView = titleAndCount
 
         val minimizeBtn = Button(this).apply {
             text = "—"
-            textSize = 12f
+            textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#2563EB"))
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            setPadding(18, 6, 18, 6)
+            setPadding(dpToPx(8), dpToPx(2), dpToPx(8), dpToPx(2))
         }
 
         val closeBtn = Button(this).apply {
             text = "✕"
-            textSize = 12f
+            textSize = 10f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#DC2626"))
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            setPadding(18, 6, 18, 6)
+            setPadding(dpToPx(8), dpToPx(2), dpToPx(8), dpToPx(2))
         }
 
         header.addView(titleAndCount)
@@ -119,8 +118,8 @@ class FloatingTrackerService : Service() {
 
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                dpToPx(296),
-                dpToPx(260)
+                dpToPx(196),
+                dpToPx(148)
             )
         }
 
@@ -135,16 +134,16 @@ class FloatingTrackerService : Service() {
                 val isRed = suit == "♥" || suit == "♦"
                 val btn = Button(this).apply {
                     text = cardId
-                    textSize = 12f
+                    textSize = 10f
                     typeface = Typeface.DEFAULT_BOLD
                     minimumWidth = 0
                     minWidth = 0
                     minimumHeight = 0
                     minHeight = 0
-                    setPadding(10, 10, 10, 10)
+                    setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(2))
                     layoutParams = GridLayout.LayoutParams().apply {
-                        width = dpToPx(64)
-                        height = dpToPx(40)
+                        width = dpToPx(42)
+                        height = dpToPx(28)
                     }
                     setOnClickListener {
                         toggleCard(cardId)
@@ -163,17 +162,18 @@ class FloatingTrackerService : Service() {
         body.addView(scrollView)
 
         val resetBtn = Button(this).apply {
-            text = "Limpar Baralho (52)"
-            textSize = 12f
+            text = "Limpar (52)"
+            textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#16A34A"))
             val lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                dpToPx(30)
             )
-            lp.topMargin = dpToPx(8)
+            lp.topMargin = dpToPx(4)
             layoutParams = lp
+            setPadding(dpToPx(4), dpToPx(2), dpToPx(4), dpToPx(2))
             setOnClickListener {
                 playedCards.clear()
                 cardStorage.clearPlayedCards()
@@ -257,7 +257,7 @@ class FloatingTrackerService : Service() {
 
     private fun updateCounterText() {
         val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • Restam $remaining/52"
+        counterTextView?.text = "Copas • $remaining/52"
     }
 
     private fun dpToPx(dp: Int): Int {
