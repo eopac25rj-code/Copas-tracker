@@ -17,7 +17,6 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 
 class FloatingTrackerService : Service() {
@@ -29,9 +28,14 @@ class FloatingTrackerService : Service() {
     private val playedCards = mutableSetOf<String>()
     private val cardButtons = mutableMapOf<String, Button>()
     private var counterTextView: TextView? = null
+    private var suitCounterTextView: TextView? = null
     private var bodyContainer: View? = null
     private var resetButton: Button? = null
     private var isMinimized = false
+
+    // Ordem com o Ás (A) por último
+    private val displayRanks = listOf("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
+    private val displaySuits = listOf("♠", "♥", "♦", "♣")
 
     private var pendingClearConfirmation = false
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -58,6 +62,8 @@ class FloatingTrackerService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val panelWidthDp = 212
+
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -66,8 +72,8 @@ class FloatingTrackerService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 24
-            y = 80
+            x = 20
+            y = 64
         }
 
         val root = LinearLayout(this).apply {
@@ -77,17 +83,17 @@ class FloatingTrackerService : Service() {
                 cornerRadius = dpToPx(14).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#3B82F6"))
             }
-            setPadding(dpToPx(8), dpToPx(6), dpToPx(8), dpToPx(8))
+            setPadding(dpToPx(6), dpToPx(5), dpToPx(6), dpToPx(6))
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
-                dpToPx(196),
+                dpToPx(panelWidthDp),
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(4))
+            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(3))
         }
 
         val titleAndCount = TextView(this).apply {
@@ -115,7 +121,7 @@ class FloatingTrackerService : Service() {
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            val lp = LinearLayout.LayoutParams(dpToPx(28), dpToPx(24))
+            val lp = LinearLayout.LayoutParams(dpToPx(28), dpToPx(22))
             lp.marginEnd = dpToPx(14)
             layoutParams = lp
             setPadding(0, 0, 0, 0)
@@ -134,7 +140,7 @@ class FloatingTrackerService : Service() {
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            layoutParams = LinearLayout.LayoutParams(dpToPx(28), dpToPx(24))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(28), dpToPx(22))
             setPadding(0, 0, 0, 0)
         }
 
@@ -144,35 +150,62 @@ class FloatingTrackerService : Service() {
 
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-        }
-
-        val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
-                dpToPx(196),
-                dpToPx(148)
+                dpToPx(panelWidthDp),
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
 
+        val suitCounters = TextView(this).apply {
+            setTextColor(Color.parseColor("#E2E8F0"))
+            textSize = 9.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(2)
+            }
+            setPadding(dpToPx(2), dpToPx(1), dpToPx(2), dpToPx(2))
+        }
+        suitCounterTextView = suitCounters
+        body.addView(suitCounters)
+
         val grid = GridLayout(this).apply {
             columnCount = 4
-            useDefaultMargins = true
+            rowCount = displayRanks.size
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
 
-        for (rank in CardStorage.RANKS) {
-            for (suit in CardStorage.SUITS) {
+        val marginDp = 2
+        val btnWidthDp = (panelWidthDp - (marginDp * 8)) / 4
+        val btnHeightDp = 22
+
+        for (rank in displayRanks) {
+            for (suit in displaySuits) {
                 val cardId = "$rank$suit"
                 val btn = Button(this).apply {
                     text = cardId
-                    textSize = 10f
+                    textSize = 9.5f
                     typeface = Typeface.DEFAULT_BOLD
                     minimumWidth = 0
                     minWidth = 0
                     minimumHeight = 0
                     minHeight = 0
-                    setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(2))
+                    setPadding(0, 0, 0, 0)
                     layoutParams = GridLayout.LayoutParams().apply {
-                        width = dpToPx(42)
-                        height = dpToPx(28)
+                        width = dpToPx(btnWidthDp)
+                        height = dpToPx(btnHeightDp)
+                        setMargins(
+                            dpToPx(marginDp),
+                            dpToPx(marginDp),
+                            dpToPx(marginDp),
+                            dpToPx(marginDp)
+                        )
                     }
                     setOnClickListener {
                         toggleCard(cardId)
@@ -184,8 +217,7 @@ class FloatingTrackerService : Service() {
             }
         }
 
-        scrollView.addView(grid)
-        body.addView(scrollView)
+        body.addView(grid)
 
         val resetBtn = Button(this).apply {
             textSize = 10f
@@ -193,7 +225,7 @@ class FloatingTrackerService : Service() {
             setTextColor(Color.WHITE)
             val lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dpToPx(30)
+                dpToPx(28)
             )
             lp.topMargin = dpToPx(4)
             layoutParams = lp
@@ -307,7 +339,7 @@ class FloatingTrackerService : Service() {
             btn.background = makePillDrawable(
                 fillColor = "#DC2626",
                 strokeColor = "#FECACA",
-                radiusDp = 6
+                radiusDp = 5
             )
             btn.setTextColor(Color.WHITE)
             btn.alpha = 1.0f
@@ -315,7 +347,7 @@ class FloatingTrackerService : Service() {
             btn.background = makePillDrawable(
                 fillColor = "#15803D",
                 strokeColor = "#86EFAC",
-                radiusDp = 6
+                radiusDp = 5
             )
             btn.setTextColor(Color.WHITE)
             btn.alpha = 1.0f
@@ -334,9 +366,20 @@ class FloatingTrackerService : Service() {
         }
     }
 
+    private fun remainingForSuit(suit: String): Int {
+        val playedInSuit = playedCards.count { it.endsWith(suit) }
+        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
+    }
+
     private fun updateCounterText() {
         val remaining = 52 - playedCards.size
         counterTextView?.text = "Copas • $remaining/52"
+
+        val remSpades = remainingForSuit("♠")
+        val remHearts = remainingForSuit("♥")
+        val remDiamonds = remainingForSuit("♦")
+        val remClubs = remainingForSuit("♣")
+        suitCounterTextView?.text = "♠ $remSpades  ♥ $remHearts  ♦ $remDiamonds  ♣ $remClubs"
     }
 
     private fun dpToPx(dp: Int): Int {
