@@ -28,8 +28,8 @@ class FloatingTrackerService : Service() {
     private val playedCards = mutableSetOf<String>()
     private val undoStack = ArrayDeque<Set<String>>()
     private val cardButtons = mutableMapOf<String, Button>()
+    private val suitCounterViews = mutableMapOf<String, TextView>()
     private var counterTextView: TextView? = null
-    private var suitsCounterTextView: TextView? = null
     private var bodyContainer: View? = null
     private var resetButton: Button? = null
     private var undoButton: Button? = null
@@ -63,7 +63,8 @@ class FloatingTrackerService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val panelWidthDp = 216
+        // Tamanho reduzido geral para não ficar grande na tela
+        val panelWidthDp = 188
 
         layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -73,18 +74,18 @@ class FloatingTrackerService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 20
-            y = 16
+            x = 16
+            y = 14
         }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E612161F"))
-                cornerRadius = dpToPx(13).toFloat()
+                cornerRadius = dpToPx(12).toFloat()
                 setStroke(dpToPx(1), Color.parseColor("#3B82F6"))
             }
-            setPadding(dpToPx(7), dpToPx(5), dpToPx(7), dpToPx(6))
+            setPadding(dpToPx(6), dpToPx(4), dpToPx(6), dpToPx(5))
         }
 
         val header = LinearLayout(this).apply {
@@ -99,7 +100,7 @@ class FloatingTrackerService : Service() {
 
         val titleAndCount = TextView(this).apply {
             setTextColor(Color.WHITE)
-            textSize = 10.5f
+            textSize = 10f
             typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(
                 0,
@@ -111,37 +112,37 @@ class FloatingTrackerService : Service() {
 
         val minimizeBtn = Button(this).apply {
             text = "—"
-            textSize = 10f
+            textSize = 9.5f
             setTextColor(Color.WHITE)
             background = makePillDrawable(
                 fillColor = "#2563EB",
                 strokeColor = "#93C5FD",
-                radiusDp = 6
+                radiusDp = 5
             )
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            val lp = LinearLayout.LayoutParams(dpToPx(26), dpToPx(20))
-            lp.marginEnd = dpToPx(10)
+            val lp = LinearLayout.LayoutParams(dpToPx(24), dpToPx(18))
+            lp.marginEnd = dpToPx(8)
             layoutParams = lp
             setPadding(0, 0, 0, 0)
         }
 
         val closeBtn = Button(this).apply {
             text = "✕"
-            textSize = 10f
+            textSize = 9.5f
             setTextColor(Color.WHITE)
             background = makePillDrawable(
                 fillColor = "#991B1B",
                 strokeColor = "#FCA5A5",
-                radiusDp = 6
+                radiusDp = 5
             )
             minimumWidth = 0
             minWidth = 0
             minimumHeight = 0
             minHeight = 0
-            layoutParams = LinearLayout.LayoutParams(dpToPx(26), dpToPx(20))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(24), dpToPx(18))
             setPadding(0, 0, 0, 0)
         }
 
@@ -157,325 +158,16 @@ class FloatingTrackerService : Service() {
             )
         }
 
-        val suitsCounter = TextView(this).apply {
-            setTextColor(Color.parseColor("#CBD5E1"))
-            textSize = 9.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(3)
-            }
-        }
-        suitsCounterTextView = suitsCounter
-        body.addView(suitsCounter)
-
         val colCount = displaySuits.size
-        val grid = GridLayout(this).apply {
-            columnCount = colCount
-            rowCount = displayRanks.size
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
         val horizontalGapDp = 3
-        val verticalGapDp = 2
+        val verticalGapDp = 1
         val totalHorizontalGapDp = horizontalGapDp * 2 * colCount
-        val btnWidthDp = ((panelWidthDp - totalHorizontalGapDp) / colCount).coerceAtLeast(42)
-        val btnHeightDp = 20
+        val btnWidthDp = ((panelWidthDp - totalHorizontalGapDp) / colCount).coerceAtLeast(36)
+        val btnHeightDp = 17
 
-        for (rank in displayRanks) {
-            for (suit in displaySuits) {
-                val cardId = "$rank$suit"
-                val btn = Button(this).apply {
-                    text = cardId
-                    textSize = 9.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    minimumWidth = 0
-                    minWidth = 0
-                    minimumHeight = 0
-                    minHeight = 0
-                    setPadding(0, 0, 0, 0)
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = dpToPx(btnWidthDp)
-                        height = dpToPx(btnHeightDp)
-                        setMargins(
-                            dpToPx(horizontalGapDp),
-                            dpToPx(verticalGapDp),
-                            dpToPx(horizontalGapDp),
-                            dpToPx(verticalGapDp)
-                        )
-                    }
-                    setOnClickListener {
-                        toggleCard(cardId)
-                    }
-                }
-                cardButtons[cardId] = btn
-                grid.addView(btn)
-                updateCardButtonStyle(cardId)
-            }
-        }
-
-        body.addView(grid)
-
-        val actionsRow = LinearLayout(this).apply {
+        // Linha de contadores alinhada exatamente com cada coluna de naipe
+        val suitHeaderRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dpToPx(4)
-            }
-        }
-
-        val undoBtn = Button(this).apply {
-            text = "DESFAZER"
-            textSize = 9.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dpToPx(24),
-                1f
-            ).apply {
-                marginEnd = dpToPx(4)
-            }
-            setPadding(dpToPx(3), dpToPx(1), dpToPx(3), dpToPx(1))
-            setOnClickListener {
-                undoLastAction()
-            }
-        }
-        undoButton = undoBtn
-
-        val resetBtn = Button(this).apply {
-            textSize = 9.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dpToPx(24),
-                1.2f
-            ).apply {
-                marginStart = dpToPx(4)
-            }
-            setPadding(dpToPx(3), dpToPx(1), dpToPx(3), dpToPx(1))
-            setOnClickListener {
-                handleResetClick()
-            }
-        }
-        resetButton = resetBtn
-
-        actionsRow.addView(undoBtn)
-        actionsRow.addView(resetBtn)
-        body.addView(actionsRow)
-
-        bodyContainer = body
-        root.addView(header)
-        root.addView(body)
-
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-
-        header.setOnTouchListener { _, event ->
-            val params = layoutParams ?: return@setOnTouchListener false
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    params.x = initialX + (event.rawX - initialTouchX).toInt()
-                    params.y = initialY + (event.rawY - initialTouchY).toInt()
-                    windowManager.updateViewLayout(floatingView, params)
-                    true
-                }
-                else -> false
-            }
-        }
-
-        minimizeBtn.setOnClickListener {
-            isMinimized = !isMinimized
-            bodyContainer?.visibility = if (isMinimized) View.GONE else View.VISIBLE
-            minimizeBtn.text = if (isMinimized) "+" else "—"
-        }
-
-        closeBtn.setOnClickListener {
-            stopSelf()
-        }
-
-        updateResetButtonAppearance()
-        updateUndoButtonAppearance()
-        updateCounterText()
-        floatingView = root
-        windowManager.addView(floatingView, layoutParams)
-    }
-
-    private fun pushUndoSnapshot() {
-        undoStack.addLast(playedCards.toSet())
-        if (undoStack.size > 30) {
-            undoStack.removeFirst()
-        }
-        updateUndoButtonAppearance()
-    }
-
-    private fun undoLastAction() {
-        if (undoStack.isEmpty()) return
-        val previousState = undoStack.removeLast()
-        playedCards.clear()
-        playedCards.addAll(previousState)
-        cardStorage.savePlayedCards(playedCards)
-
-        for (id in cardButtons.keys) {
-            updateCardButtonStyle(id)
-        }
-        updateCounterText()
-        updateUndoButtonAppearance()
-    }
-
-    private fun updateUndoButtonAppearance() {
-        val btn = undoButton ?: return
-        val hasHistory = undoStack.isNotEmpty()
-        btn.isEnabled = hasHistory
-        if (hasHistory) {
-            btn.alpha = 1.0f
-            btn.background = makePillDrawable(
-                fillColor = "#1E3A8A",
-                strokeColor = "#93C5FD",
-                radiusDp = 6
-            )
-        } else {
-            btn.alpha = 0.45f
-            btn.background = makePillDrawable(
-                fillColor = "#1F2937",
-                strokeColor = "#4B5563",
-                radiusDp = 6
-            )
-        }
-    }
-
-    private fun handleResetClick() {
-        if (!pendingClearConfirmation) {
-            pendingClearConfirmation = true
-            updateResetButtonAppearance()
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            uiHandler.postDelayed(clearTimeoutRunnable, 4000L)
-        } else {
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            pendingClearConfirmation = false
-            if (playedCards.isNotEmpty()) {
-                pushUndoSnapshot()
-                playedCards.clear()
-                cardStorage.clearPlayedCards()
-                for (id in cardButtons.keys) {
-                    updateCardButtonStyle(id)
-                }
-                updateCounterText()
-            }
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun updateResetButtonAppearance() {
-        val btn = resetButton ?: return
-        if (pendingClearConfirmation) {
-            btn.text = "CONFIRMAR?"
-            btn.background = makePillDrawable(
-                fillColor = "#D97706",
-                strokeColor = "#FDE68A",
-                radiusDp = 6
-            )
-        } else {
-            val remaining = 52 - playedCards.size
-            btn.text = "LIMPAR ($remaining)"
-            btn.background = makePillDrawable(
-                fillColor = "#16A34A",
-                strokeColor = "#86EFAC",
-                radiusDp = 6
-            )
-        }
-    }
-
-    private fun toggleCard(cardId: String) {
-        pushUndoSnapshot()
-        if (playedCards.contains(cardId)) {
-            playedCards.remove(cardId)
-        } else {
-            playedCards.add(cardId)
-        }
-        cardStorage.savePlayedCards(playedCards)
-        updateCardButtonStyle(cardId)
-        updateCounterText()
-    }
-
-    private fun updateCardButtonStyle(cardId: String) {
-        val btn = cardButtons[cardId] ?: return
-        val isPlayed = playedCards.contains(cardId)
-
-        if (isPlayed) {
-            btn.background = makePillDrawable(
-                fillColor = "#DC2626",
-                strokeColor = "#FECACA",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        } else {
-            btn.background = makePillDrawable(
-                fillColor = "#15803D",
-                strokeColor = "#86EFAC",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        }
-    }
-
-    private fun makePillDrawable(
-        fillColor: String,
-        strokeColor: String,
-        radiusDp: Int
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(Color.parseColor(fillColor))
-            cornerRadius = dpToPx(radiusDp).toFloat()
-            setStroke(dpToPx(1), Color.parseColor(strokeColor))
-        }
-    }
-
-    private fun remainingForSuit(suit: String): Int {
-        val playedInSuit = playedCards.count { it.endsWith(suit) }
-        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
-    }
-
-    private fun updateCounterText() {
-        val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • $remaining/52"
-        suitsCounterTextView?.text =
-            "♠ ${remainingForSuit("♠")}  ♥ ${remainingForSuit("♥")}  ♦ ${remainingForSuit("♦")}  ♣ ${remainingForSuit("♣")}"
-        if (!pendingClearConfirmation) {
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
-    }
-
-    override fun onDestroy() {
-        uiHandler.removeCallbacks(clearTimeoutRunnable)
-        super.onDestroy()
-        floatingView?.let {
-            windowManager.removeView(it)
-            floatingView = null
-        }
-    }
-}
+                LinearLayout.LayoutParams.WRAP
