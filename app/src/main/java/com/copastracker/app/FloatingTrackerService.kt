@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -22,6 +23,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -254,14 +256,14 @@ class FloatingTrackerService : Service() {
                             lastCaptureStatus = "PRETA"
                             showToast("Ecrã preto (bloqueado pelo jogo)")
                         } else {
-                            val savedFile = saveBitmapToPng(bitmap)
+                            val savedLabel = saveBitmapToGallery(bitmap)
                             bitmap.recycle()
-                            if (savedFile != null) {
+                            if (savedLabel != null) {
                                 lastCaptureStatus = "SALVO"
-                                showToast("Guardado: ${savedFile.name}")
+                                showToast("Guardado na Galeria: $savedLabel")
                             } else {
                                 lastCaptureStatus = "ERR_SAVE"
-                                showToast("Captura OK, mas falhou ao guardar PNG")
+                                showToast("Captura OK, mas falhou ao guardar imagem")
                             }
                         }
                     } else {
@@ -282,25 +284,56 @@ class FloatingTrackerService : Service() {
             isCapturingFrame = false
             lastCaptureStatus = "ERR_VD"
             updateCounterText()
-            showToast("Erro VD: ${e.javaClass.simpleName}: ${e.message}")
+            showToast("Erro VD: ${e.javaClass.simpleName}:${e.message}")
         }
     }
 
-    private fun saveBitmapToPng(bitmap: Bitmap): File? {
+    private fun saveBitmapToGallery(bitmap: Bitmap): String? {
+        val fileName = "mesa_${System.currentTimeMillis()}.png"
         return try {
-            val baseDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: filesDir
-            val outDir = File(baseDir, "CopasTracker")
-            if (!outDir.exists() && !outDir.mkdirs()) {
-                return null
-            }
-            val file = File(outDir, "mesa_${System.currentTimeMillis()}.png")
-            FileOutputStream(file).use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                    put(
+                        MediaStore.Images.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/CopasTracker"
+                    )
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return null
+                resolver.openOutputStream(uri)?.use { out ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                        resolver.delete(uri, null, null)
+                        return null
+                    }
+                    out.flush()
+                } ?: run {
+                    resolver.delete(uri, null, null)
                     return null
                 }
-                out.flush()
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                fileName
+            } else {
+                @Suppress("DEPRECATION")
+                val baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                val outDir = File(baseDir, "CopasTracker")
+                if (!outDir.exists() && !outDir.mkdirs()) {
+                    return null
+                }
+                val file = File(outDir, fileName)
+                FileOutputStream(file).use { out ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                        return null
+                    }
+                    out.flush()
+                }
+                fileName
             }
-            file
         } catch (_: Exception) {
             null
         }
@@ -663,172 +696,4 @@ class FloatingTrackerService : Service() {
         updateResetButtonAppearance()
         updateUndoButtonAppearance()
         updateCounterText()
-        floatingView = root
-        windowManager.addView(floatingView, layoutParams)
-    }
-
-    private fun pushUndoSnapshot() {
-        undoStack.addLast(playedCards.toSet())
-        if (undoStack.size > 30) {
-            undoStack.removeFirst()
-        }
-        updateUndoButtonAppearance()
-    }
-
-    private fun undoLastAction() {
-        if (undoStack.isEmpty()) return
-        val previousState = undoStack.removeLast()
-        playedCards.clear()
-        playedCards.addAll(previousState)
-        cardStorage.savePlayedCards(playedCards)
-
-        for (id in cardButtons.keys) {
-            updateCardButtonStyle(id)
-        }
-        updateCounterText()
-        updateUndoButtonAppearance()
-    }
-
-    private fun updateUndoButtonAppearance() {
-        val btn = undoButton ?: return
-        val hasHistory = undoStack.isNotEmpty()
-        btn.isEnabled = hasHistory
-        if (hasHistory) {
-            btn.alpha = 1.0f
-            btn.background = makePillDrawable(
-                fillColor = "#1E3A8A",
-                strokeColor = "#93C5FD",
-                radiusDp = 5
-            )
-        } else {
-            btn.alpha = 0.45f
-            btn.background = makePillDrawable(
-                fillColor = "#1F2937",
-                strokeColor = "#4B5563",
-                radiusDp = 5
-            )
-        }
-    }
-
-    private fun handleResetClick() {
-        if (!pendingClearConfirmation) {
-            pendingClearConfirmation = true
-            updateResetButtonAppearance()
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            uiHandler.postDelayed(clearTimeoutRunnable, 4000L)
-        } else {
-            uiHandler.removeCallbacks(clearTimeoutRunnable)
-            pendingClearConfirmation = false
-            if (playedCards.isNotEmpty()) {
-                pushUndoSnapshot()
-                playedCards.clear()
-                cardStorage.clearPlayedCards()
-                for (id in cardButtons.keys) {
-                    updateCardButtonStyle(id)
-                }
-                updateCounterText()
-            }
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun updateResetButtonAppearance() {
-        val btn = resetButton ?: return
-        if (pendingClearConfirmation) {
-            btn.text = "CONFIRMAR?"
-            btn.background = makePillDrawable(
-                fillColor = "#D97706",
-                strokeColor = "#FDE68A",
-                radiusDp = 5
-            )
-        } else {
-            val remaining = 52 - playedCards.size
-            btn.text = "LIMPAR ($remaining)"
-            btn.background = makePillDrawable(
-                fillColor = "#16A34A",
-                strokeColor = "#86EFAC",
-                radiusDp = 5
-            )
-        }
-    }
-
-    private fun toggleCard(cardId: String) {
-        pushUndoSnapshot()
-        if (playedCards.contains(cardId)) {
-            playedCards.remove(cardId)
-        } else {
-            playedCards.add(cardId)
-        }
-        cardStorage.savePlayedCards(playedCards)
-        updateCardButtonStyle(cardId)
-        updateCounterText()
-    }
-
-    private fun updateCardButtonStyle(cardId: String) {
-        val btn = cardButtons[cardId] ?: return
-        val isPlayed = playedCards.contains(cardId)
-
-        if (isPlayed) {
-            btn.background = makePillDrawable(
-                fillColor = "#DC2626",
-                strokeColor = "#FECACA",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        } else {
-            btn.background = makePillDrawable(
-                fillColor = "#15803D",
-                strokeColor = "#86EFAC",
-                radiusDp = 5
-            )
-            btn.setTextColor(Color.WHITE)
-            btn.alpha = 1.0f
-        }
-    }
-
-    private fun makePillDrawable(
-        fillColor: String,
-        strokeColor: String,
-        radiusDp: Int
-    ): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(Color.parseColor(fillColor))
-            cornerRadius = dpToPx(radiusDp).toFloat()
-            setStroke(dpToPx(1), Color.parseColor(strokeColor))
-        }
-    }
-
-    private fun remainingForSuit(suit: String): Int {
-        val playedInSuit = playedCards.count { it.endsWith(suit) }
-        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
-    }
-
-    private fun updateCounterText() {
-        val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • $remaining/52 • $lastCaptureStatus"
-        for (suit in displaySuits) {
-            suitCounterViews[suit]?.text = "$suit ${remainingForSuit(suit)}"
-        }
-        if (!pendingClearConfirmation) {
-            updateResetButtonAppearance()
-        }
-    }
-
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
-    }
-
-    override fun onDestroy() {
-        uiHandler.removeCallbacks(clearTimeoutRunnable)
-        stopProjectionResources()
-        mediaProjection?.unregisterCallback(projectionCallback)
-        mediaProjection?.stop()
-        mediaProjection = null
-        super.onDestroy()
-        floatingView?.let {
-            windowManager.removeView(it)
-            floatingView = null
-        }
-    }
-}
+        floatingView
