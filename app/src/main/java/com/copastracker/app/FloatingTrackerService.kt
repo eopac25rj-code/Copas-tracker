@@ -133,7 +133,7 @@ class FloatingTrackerService : Service() {
     private fun buildProjectionNotification(): Notification {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("CopasTracker ativo")
-            .setContentText("Captura de ecrã pronta")
+            .setContentText("Captura de tela pronta")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
@@ -181,7 +181,7 @@ class FloatingTrackerService : Service() {
             mediaProjection = mp
             lastCaptureStatus = "ON"
             updateCounterText()
-            showToast("Captura pronta! Carregue em FOTO")
+            showToast("Captura pronta! Toque em FOTO")
         } catch (e: Exception) {
             lastCaptureStatus = "ERR_MP"
             updateCounterText()
@@ -194,7 +194,7 @@ class FloatingTrackerService : Service() {
         if (mp == null) {
             lastCaptureStatus = "OFF"
             updateCounterText()
-            showToast("Sem captura ativa! Abra a app e carregue em Ativar Captura")
+            showToast("Sem captura ativa! Abra o app e toque em Ativar Captura")
             return
         }
         if (isCapturingFrame) {
@@ -236,7 +236,7 @@ class FloatingTrackerService : Service() {
                 isCapturingFrame = false
                 lastCaptureStatus = "VD_NULL"
                 updateCounterText()
-                showToast("VirtualDisplay devolveu nulo")
+                showToast("VirtualDisplay retornou nulo")
                 return
             }
 
@@ -254,21 +254,21 @@ class FloatingTrackerService : Service() {
                         if (isBlack) {
                             bitmap.recycle()
                             lastCaptureStatus = "PRETA"
-                            showToast("Ecrã preto (bloqueado pelo jogo)")
+                            showToast("Tela preta (bloqueado pelo jogo)")
                         } else {
                             val savedLabel = saveBitmapToGallery(bitmap)
                             bitmap.recycle()
                             if (savedLabel != null) {
                                 lastCaptureStatus = "SALVO"
-                                showToast("Guardado na Galeria: $savedLabel")
+                                showToast("Salvo na Galeria: $savedLabel")
                             } else {
                                 lastCaptureStatus = "ERR_SAVE"
-                                showToast("Captura OK, mas falhou ao guardar imagem")
+                                showToast("Captura OK, mas falhou ao salvar imagem")
                             }
                         }
                     } else {
                         lastCaptureStatus = "SEM_FRAME"
-                        showToast("Sem frame ainda, carregue em FOTO novamente")
+                        showToast("Sem frame ainda, toque em FOTO de novo")
                     }
                 } catch (e: Exception) {
                     lastCaptureStatus = "ERR_FRAME"
@@ -696,4 +696,172 @@ class FloatingTrackerService : Service() {
         updateResetButtonAppearance()
         updateUndoButtonAppearance()
         updateCounterText()
-        floatingView
+        floatingView = root
+        windowManager.addView(floatingView, layoutParams)
+    }
+
+    private fun pushUndoSnapshot() {
+        undoStack.addLast(playedCards.toSet())
+        if (undoStack.size > 30) {
+            undoStack.removeFirst()
+        }
+        updateUndoButtonAppearance()
+    }
+
+    private fun undoLastAction() {
+        if (undoStack.isEmpty()) return
+        val previousState = undoStack.removeLast()
+        playedCards.clear()
+        playedCards.addAll(previousState)
+        cardStorage.savePlayedCards(playedCards)
+
+        for (id in cardButtons.keys) {
+            updateCardButtonStyle(id)
+        }
+        updateCounterText()
+        updateUndoButtonAppearance()
+    }
+
+    private fun updateUndoButtonAppearance() {
+        val btn = undoButton ?: return
+        val hasHistory = undoStack.isNotEmpty()
+        btn.isEnabled = hasHistory
+        if (hasHistory) {
+            btn.alpha = 1.0f
+            btn.background = makePillDrawable(
+                fillColor = "#1E3A8A",
+                strokeColor = "#93C5FD",
+                radiusDp = 5
+            )
+        } else {
+            btn.alpha = 0.45f
+            btn.background = makePillDrawable(
+                fillColor = "#1F2937",
+                strokeColor = "#4B5563",
+                radiusDp = 5
+            )
+        }
+    }
+
+    private fun handleResetClick() {
+        if (!pendingClearConfirmation) {
+            pendingClearConfirmation = true
+            updateResetButtonAppearance()
+            uiHandler.removeCallbacks(clearTimeoutRunnable)
+            uiHandler.postDelayed(clearTimeoutRunnable, 4000L)
+        } else {
+            uiHandler.removeCallbacks(clearTimeoutRunnable)
+            pendingClearConfirmation = false
+            if (playedCards.isNotEmpty()) {
+                pushUndoSnapshot()
+                playedCards.clear()
+                cardStorage.clearPlayedCards()
+                for (id in cardButtons.keys) {
+                    updateCardButtonStyle(id)
+                }
+                updateCounterText()
+            }
+            updateResetButtonAppearance()
+        }
+    }
+
+    private fun updateResetButtonAppearance() {
+        val btn = resetButton ?: return
+        if (pendingClearConfirmation) {
+            btn.text = "CONFIRMAR?"
+            btn.background = makePillDrawable(
+                fillColor = "#D97706",
+                strokeColor = "#FDE68A",
+                radiusDp = 5
+            )
+        } else {
+            val remaining = 52 - playedCards.size
+            btn.text = "LIMPAR ($remaining)"
+            btn.background = makePillDrawable(
+                fillColor = "#16A34A",
+                strokeColor = "#86EFAC",
+                radiusDp = 5
+            )
+        }
+    }
+
+    private fun toggleCard(cardId: String) {
+        pushUndoSnapshot()
+        if (playedCards.contains(cardId)) {
+            playedCards.remove(cardId)
+        } else {
+            playedCards.add(cardId)
+        }
+        cardStorage.savePlayedCards(playedCards)
+        updateCardButtonStyle(cardId)
+        updateCounterText()
+    }
+
+    private fun updateCardButtonStyle(cardId: String) {
+        val btn = cardButtons[cardId] ?: return
+        val isPlayed = playedCards.contains(cardId)
+
+        if (isPlayed) {
+            btn.background = makePillDrawable(
+                fillColor = "#DC2626",
+                strokeColor = "#FECACA",
+                radiusDp = 5
+            )
+            btn.setTextColor(Color.WHITE)
+            btn.alpha = 1.0f
+        } else {
+            btn.background = makePillDrawable(
+                fillColor = "#15803D",
+                strokeColor = "#86EFAC",
+                radiusDp = 5
+            )
+            btn.setTextColor(Color.WHITE)
+            btn.alpha = 1.0f
+        }
+    }
+
+    private fun makePillDrawable(
+        fillColor: String,
+        strokeColor: String,
+        radiusDp: Int
+    ): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(fillColor))
+            cornerRadius = dpToPx(radiusDp).toFloat()
+            setStroke(dpToPx(1), Color.parseColor(strokeColor))
+        }
+    }
+
+    private fun remainingForSuit(suit: String): Int {
+        val playedInSuit = playedCards.count { it.endsWith(suit) }
+        return (displayRanks.size - playedInSuit).coerceAtLeast(0)
+    }
+
+    private fun updateCounterText() {
+        val remaining = 52 - playedCards.size
+        counterTextView?.text = "Copas • $remaining/52 • $lastCaptureStatus"
+        for (suit in displaySuits) {
+            suitCounterViews[suit]?.text = "$suit ${remainingForSuit(suit)}"
+        }
+        if (!pendingClearConfirmation) {
+            updateResetButtonAppearance()
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).toInt()
+    }
+
+    override fun onDestroy() {
+        uiHandler.removeCallbacks(clearTimeoutRunnable)
+        stopProjectionResources()
+        mediaProjection?.unregisterCallback(projectionCallback)
+        mediaProjection?.stop()
+        mediaProjection = null
+        super.onDestroy()
+        floatingView?.let {
+            windowManager.removeView(it)
+            floatingView = null
+        }
+    }
+}
