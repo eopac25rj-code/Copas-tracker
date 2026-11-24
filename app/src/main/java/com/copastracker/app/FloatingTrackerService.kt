@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -20,11 +19,9 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
-import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -35,9 +32,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import java.io.File
-import java.io.FileOutputStream
-import kotlin.math.abs
 
 class FloatingTrackerService : Service() {
 
@@ -66,6 +60,9 @@ class FloatingTrackerService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var captureWidth = 0
+    private var captureHeight = 0
+    private var isProjectionCallbackRegistered = false
     private var isCapturingFrame = false
     private var lastCaptureStatus = "OFF"
 
@@ -83,9 +80,11 @@ class FloatingTrackerService : Service() {
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             lastCaptureStatus = "PAROU"
+            isCapturingFrame = false
             updateCounterText()
             stopProjectionResources()
             mediaProjection = null
+            isProjectionCallbackRegistered = false
         }
     }
 
@@ -162,7 +161,10 @@ class FloatingTrackerService : Service() {
 
         try {
             stopProjectionResources()
-            mediaProjection?.unregisterCallback(projectionCallback)
+            if (isProjectionCallbackRegistered) {
+                mediaProjection?.unregisterCallback(projectionCallback)
+                isProjectionCallbackRegistered = false
+            }
             mediaProjection?.stop()
             mediaProjection = null
 
@@ -178,9 +180,11 @@ class FloatingTrackerService : Service() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 mp.registerCallback(projectionCallback, uiHandler)
+                isProjectionCallbackRegistered = true
             }
 
             mediaProjection = mp
+            ensureVirtualDisplay(mp)
             lastCaptureStatus = "ON"
             updateCounterText()
             showToast("Captura pronta! Toque em FOTO")
@@ -189,6 +193,41 @@ class FloatingTrackerService : Service() {
             updateCounterText()
             showToast("Erro projeção: ${e.javaClass.simpleName}")
         }
+    }
+
+    private fun ensureVirtualDisplay(mp: MediaProjection): Boolean {
+        if (virtualDisplay != null && imageReader != null && captureWidth > 0 && captureHeight > 0) {
+            return true
+        }
+        stopProjectionResources()
+
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels.coerceAtLeast(1)
+        val height = metrics.heightPixels.coerceAtLeast(1)
+        val density = metrics.densityDpi.coerceAtLeast(72)
+
+        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+        val display = mp.createVirtualDisplay(
+            "CopasTrackerDisplay",
+            width,
+            height,
+            density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            reader.surface,
+            null,
+            uiHandler
+        )
+
+        if (display == null) {
+            reader.close()
+            return false
+        }
+
+        captureWidth = width
+        captureHeight = height
+        imageReader = reader
+        virtualDisplay = display
+        return true
     }
 
     private fun testSingleFrameCapture() {
@@ -200,8 +239,13 @@ class FloatingTrackerService : Service() {
             return
         }
         if (isCapturingFrame) {
-            lastCaptureStatus = "LENDO..."
+            return
+        }
+
+        if (!ensureVirtualDisplay(mp)) {
+            lastCaptureStatus = "VD_NULL"
             updateCounterText()
+            showToast("VirtualDisplay retornou nulo")
             return
         }
 
@@ -209,98 +253,49 @@ class FloatingTrackerService : Service() {
         lastCaptureStatus = "LENDO..."
         updateCounterText()
 
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels.coerceAtLeast(1)
-        val height = metrics.heightPixels.coerceAtLeast(1)
-        val density = metrics.densityDpi.coerceAtLeast(72)
-
-        stopProjectionResources()
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                mp.registerCallback(projectionCallback, uiHandler)
-            }
-
-            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            val display = mp.createVirtualDisplay(
-                "CopasTestCapture",
-                width,
-                height,
-                density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.surface,
-                null,
-                uiHandler
-            )
-
-            if (display == null) {
-                reader.close()
-                isCapturingFrame = false
-                lastCaptureStatus = "VD_NULL"
-                updateCounterText()
-                showToast("VirtualDisplay retornou nulo")
-                return
-            }
-
-            imageReader = reader
-            virtualDisplay = display
-
-            uiHandler.postDelayed({
-                try {
-                    val image = reader.acquireLatestImage()
-                    if (image != null) {
-                        val bitmap = imageToBitmap(image, width, height)
-                        image.close()
-
-                        val isBlack = isBitmapMostlyBlack(bitmap)
-                        if (isBlack) {
-                            bitmap.recycle()
-                            lastCaptureStatus = "PRETA"
-                            showToast("Tela preta (bloqueado pelo jogo)")
-                        } else {
-                            val stamp = System.currentTimeMillis()
-                            val fullSaved = saveBitmapToGallery(bitmap, "mesa_$stamp.png")
-                            val centerBitmap = cropCenterRegion(bitmap)
-                            bitmap.recycle()
-
-                            val centerSaved = if (centerBitmap != null) {
-                                processCenterBitmapForCards(centerBitmap)
-                                val name = saveBitmapToGallery(centerBitmap, "centro_$stamp.png")
-                                centerBitmap.recycle()
-                                name
-                            } else {
-                                null
-                            }
-
-                            if (fullSaved != null && centerSaved != null) {
-                                lastCaptureStatus = "LIDO"
-                            } else if (fullSaved != null) {
-                                lastCaptureStatus = "SALVO"
-                            } else {
-                                lastCaptureStatus = "ERR_SAVE"
-                                showToast("Captura OK, mas falhou ao salvar imagem")
-                            }
-                        }
-                    } else {
-                        lastCaptureStatus = "SEM_FRAME"
-                        showToast("Sem frame ainda, toque em FOTO de novo")
-                    }
-                } catch (e: Exception) {
-                    lastCaptureStatus = "ERR_FRAME"
-                    showToast("Erro ao ler frame: ${e.javaClass.simpleName}")
-                } finally {
-                    stopProjectionResources()
-                    isCapturingFrame = false
-                    updateCounterText()
+        uiHandler.postDelayed({
+            try {
+                val reader = imageReader
+                if (reader == null) {
+                    lastCaptureStatus = "SEM_READER"
+                    showToast("Leitor de imagem indisponível")
+                    return@postDelayed
                 }
-            }, 350L)
-        } catch (e: Exception) {
-            stopProjectionResources()
-            isCapturingFrame = false
-            lastCaptureStatus = "ERR_VD"
-            updateCounterText()
-            showToast("Erro VD: ${e.javaClass.simpleName}: ${e.message}")
-        }
+
+                val image = reader.acquireLatestImage()
+                if (image != null) {
+                    val bitmap = imageToBitmap(image, captureWidth, captureHeight)
+                    image.close()
+
+                    if (isBitmapMostlyBlack(bitmap)) {
+                        bitmap.recycle()
+                        lastCaptureStatus = "PRETA"
+                        showToast("Tela preta (bloqueado pelo jogo)")
+                    } else {
+                        val centerBitmap = cropCenterRegion(bitmap)
+                        bitmap.recycle()
+
+                        if (centerBitmap != null) {
+                            processCenterBitmapForCards(centerBitmap)
+                            centerBitmap.recycle()
+                            lastCaptureStatus = "OK"
+                        } else {
+                            lastCaptureStatus = "ERR_CROP"
+                            showToast("Falha ao recortar centro")
+                        }
+                    }
+                } else {
+                    lastCaptureStatus = "SEM_FRAME"
+                    showToast("Sem frame ainda, toque em FOTO de novo")
+                }
+            } catch (e: Exception) {
+                lastCaptureStatus = "ERR_FRAME"
+                showToast("Erro ao ler frame: ${e.javaClass.simpleName}")
+            } finally {
+                isCapturingFrame = false
+                updateCounterText()
+            }
+        }, 120L)
     }
     private fun cropCenterRegion(source: Bitmap): Bitmap? {
         if (source.width <= 1 || source.height <= 1) return null
@@ -317,6 +312,9 @@ class FloatingTrackerService : Service() {
 
     private fun processCenterBitmapForCards(centerBitmap: Bitmap) {
         val currentTrickCards = mutableSetOf<String>()
+        var whiteSlots = 0
+        var suitFoundSlots = 0
+        var rankFoundSlots = 0
 
         CardSlot.entries.forEach { slot ->
             val rawCrop = cropCardSlot(centerBitmap, slot) ?: return@forEach
@@ -326,9 +324,12 @@ class FloatingTrackerService : Service() {
             }
 
             if (hasWhiteCardSurface(orientedCrop)) {
-                val cardId = recognizeCardId(orientedCrop)
-                if (cardId != null) {
-                    currentTrickCards.add(cardId)
+                whiteSlots++
+                val readResult = recognizeCardDetails(orientedCrop)
+                if (readResult.suit != null) suitFoundSlots++
+                if (readResult.rank != null) rankFoundSlots++
+                if (readResult.cardId != null) {
+                    currentTrickCards.add(readResult.cardId)
                 }
             }
             orientedCrop.recycle()
@@ -336,6 +337,7 @@ class FloatingTrackerService : Service() {
 
         if (currentTrickCards.isEmpty()) {
             lastSeenTrickCards = emptySet()
+            showToast("Sem carta lida (branco=$whiteSlots, naipe=$suitFoundSlots, valor=$rankFoundSlots)")
             return
         }
 
@@ -352,9 +354,15 @@ class FloatingTrackerService : Service() {
             updateCounterText()
             showToast("Marcado: ${newCards.joinToString(", ")}")
         } else {
-            showToast("Mesa: ${currentTrickCards.joinToString(", ")}")
+            showToast("Já marcado: ${currentTrickCards.joinToString(", ")}")
         }
     }
+
+    private data class CardReadResult(
+        val rank: String?,
+        val suit: String?,
+        val cardId: String?
+    )
 
     private fun cropCardSlot(center: Bitmap, slot: CardSlot): Bitmap? {
         val w = center.width
@@ -396,33 +404,31 @@ class FloatingTrackerService : Service() {
             for (x in 0 until bitmap.width step stepX) {
                 val c = bitmap.getPixel(x, y)
                 sampled++
-                if (Color.red(c) > 210 && Color.green(c) > 210 && Color.blue(c) > 210) {
+                if (Color.red(c) > 195 && Color.green(c) > 195 && Color.blue(c) > 195) {
                     whitePixels++
                 }
             }
         }
-        return sampled > 0 && (whitePixels.toFloat() / sampled.toFloat()) > 0.20f
+        return sampled > 0 && (whitePixels.toFloat() / sampled.toFloat()) > 0.16f
     }
 
-    private fun recognizeCardId(cardBitmap: Bitmap): String? {
+    private fun recognizeCardDetails(cardBitmap: Bitmap): CardReadResult {
         val w = cardBitmap.width
         val h = cardBitmap.height
-        if (w < 8 || h < 8) return null
+        if (w < 8 || h < 8) return CardReadResult(null, null, null)
 
-        val topZone = Bitmap.createBitmap(
-            cardBitmap,
-            (w * 0.25f).toInt().coerceIn(0, w - 1),
-            (h * 0.08f).toInt().coerceIn(0, h - 1),
-            (w * 0.50f).toInt().coerceAtLeast(1).coerceAtMost(w - (w * 0.25f).toInt()),
-            (h * 0.34f).toInt().coerceAtLeast(1).coerceAtMost(h - (h * 0.08f).toInt())
-        )
-        val midZone = Bitmap.createBitmap(
-            cardBitmap,
-            (w * 0.25f).toInt().coerceIn(0, w - 1),
-            (h * 0.42f).toInt().coerceIn(0, h - 1),
-            (w * 0.50f).toInt().coerceAtLeast(1).coerceAtMost(w - (w * 0.25f).toInt()),
-            (h * 0.38f).toInt().coerceAtLeast(1).coerceAtMost(h - (h * 0.42f).toInt())
-        )
+        val topX = (w * 0.20f).toInt().coerceIn(0, w - 1)
+        val topY = (h * 0.06f).toInt().coerceIn(0, h - 1)
+        val topW = (w * 0.60f).toInt().coerceAtLeast(1).coerceAtMost(w - topX)
+        val topH = (h * 0.38f).toInt().coerceAtLeast(1).coerceAtMost(h - topY)
+
+        val midX = (w * 0.20f).toInt().coerceIn(0, w - 1)
+        val midY = (h * 0.40f).toInt().coerceIn(0, h - 1)
+        val midW = (w * 0.60f).toInt().coerceAtLeast(1).coerceAtMost(w - midX)
+        val midH = (h * 0.42f).toInt().coerceAtLeast(1).coerceAtMost(h - midY)
+
+        val topZone = Bitmap.createBitmap(cardBitmap, topX, topY, topW, topH)
+        val midZone = Bitmap.createBitmap(cardBitmap, midX, midY, midW, midH)
 
         val suit = detectSuit(midZone, topZone)
         val rank = detectRank(topZone, suit)
@@ -430,25 +436,26 @@ class FloatingTrackerService : Service() {
         topZone.recycle()
         midZone.recycle()
 
-        return if (rank != null && suit != null) "$rank$suit" else null
+        val cardId = if (rank != null && suit != null) "$rank$suit" else null
+        return CardReadResult(rank, suit, cardId)
     }
 
     private fun detectSuit(midZone: Bitmap, topZone: Bitmap): String? {
-        val redMid = countMatchingPixels(midZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
-        val darkMid = countMatchingPixels(midZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
+        val redMid = countMatchingPixels(midZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
+        val darkMid = countMatchingPixels(midZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
 
-        val redTop = countMatchingPixels(topZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
-        val darkTop = countMatchingPixels(topZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
+        val redTop = countMatchingPixels(topZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
+        val darkTop = countMatchingPixels(topZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
 
         val totalRed = redMid + redTop
         val totalDark = darkMid + darkTop
 
-        return if (totalRed >= totalDark && totalRed > 6) {
-            val midWidthRatio = horizontalSpreadRatio(midZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
-            if (midWidthRatio > 0.48f) "♦" else "♥"
-        } else if (totalDark > totalRed && totalDark > 6) {
-            val midTopBottomBalance = verticalBalanceRatio(midZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
-            if (midTopBottomBalance < 0.46f) "♠" else "♣"
+        return if (totalRed >= totalDark && totalRed >= 3) {
+            val midWidthRatio = horizontalSpreadRatio(midZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
+            if (midWidthRatio > 0.45f) "♦" else "♥"
+        } else if (totalDark > totalRed && totalDark >= 3) {
+            val midTopBottomBalance = verticalBalanceRatio(midZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
+            if (midTopBottomBalance < 0.47f) "♠" else "♣"
         } else {
             null
         }
@@ -457,31 +464,31 @@ class FloatingTrackerService : Service() {
     private fun detectRank(topZone: Bitmap, suit: String?): String? {
         val isRed = suit == "♥" || suit == "♦"
         val matchFn: (Int, Int, Int) -> Boolean = if (isRed) {
-            { r, g, b -> r > 165 && g < 85 && b < 85 }
+            { r, g, b -> r > 150 && g < 95 && b < 95 }
         } else {
-            { r, g, b -> r < 65 && g < 65 && b < 65 }
+            { r, g, b -> r < 85 && g < 85 && b < 85 }
         }
 
         val activeCount = countMatchingPixels(topZone, matchFn)
-        if (activeCount < 4) return null
+        if (activeCount < 2) return null
 
         val spreadX = horizontalSpreadRatio(topZone, matchFn)
         val spreadY = verticalSpreadRatio(topZone, matchFn)
         val vBalance = verticalBalanceRatio(topZone, matchFn)
 
         return when {
-            spreadX > 0.56f && spreadY > 0.50f -> "10"
-            spreadX > 0.46f && vBalance in 0.42f..0.58f -> "Q"
-            spreadX > 0.44f && vBalance > 0.52f -> "K"
-            spreadX < 0.34f && vBalance > 0.52f -> "J"
-            spreadX < 0.38f && vBalance < 0.46f -> "A"
-            vBalance < 0.44f -> "7"
-            vBalance > 0.56f -> "9"
-            spreadX > 0.40f && spreadY > 0.48f -> "8"
-            activeCount > 45 -> "6"
-            activeCount > 32 -> "5"
-            activeCount > 22 -> "4"
-            activeCount > 14 -> "3"
+            spreadX > 0.52f && spreadY > 0.45f -> "10"
+            spreadX > 0.42f && vBalance in 0.40f..0.60f -> "Q"
+            spreadX > 0.40f && vBalance > 0.50f -> "K"
+            spreadX < 0.36f && vBalance > 0.50f -> "J"
+            spreadX < 0.40f && vBalance < 0.48f -> "A"
+            vBalance < 0.45f -> "7"
+            vBalance > 0.55f -> "9"
+            spreadX > 0.38f && spreadY > 0.45f -> "8"
+            activeCount > 35 -> "6"
+            activeCount > 24 -> "5"
+            activeCount > 16 -> "4"
+            activeCount > 9 -> "3"
             else -> "2"
         }
     }
@@ -555,56 +562,6 @@ class FloatingTrackerService : Service() {
         if (total == 0) return 0.5f
         return (bottomWeight.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     }
-    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_PICTURES + "/CopasTracker"
-                    )
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val resolver = contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: return null
-                resolver.openOutputStream(uri)?.use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                        resolver.delete(uri, null, null)
-                        return null
-                    }
-                    out.flush()
-                } ?: run {
-                    resolver.delete(uri, null, null)
-                    return null
-                }
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                fileName
-            } else {
-                @Suppress("DEPRECATION")
-                val baseDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val outDir = File(baseDir, "CopasTracker")
-                if (!outDir.exists() && !outDir.mkdirs()) {
-                    return null
-                }
-                val file = File(outDir, fileName)
-                FileOutputStream(file).use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                        return null
-                    }
-                    out.flush()
-                }
-                fileName
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private fun imageToBitmap(image: android.media.Image, width: Int, height: Int): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
@@ -657,6 +614,9 @@ class FloatingTrackerService : Service() {
         } catch (_: Exception) {
         }
         imageReader = null
+
+        captureWidth = 0
+        captureHeight = 0
     }
 
     private fun showToast(message: String) {
@@ -1120,7 +1080,10 @@ class FloatingTrackerService : Service() {
     override fun onDestroy() {
         uiHandler.removeCallbacks(clearTimeoutRunnable)
         stopProjectionResources()
-        mediaProjection?.unregisterCallback(projectionCallback)
+        if (isProjectionCallbackRegistered) {
+            mediaProjection?.unregisterCallback(projectionCallback)
+            isProjectionCallbackRegistered = false
+        }
         mediaProjection?.stop()
         mediaProjection = null
         super.onDestroy()
