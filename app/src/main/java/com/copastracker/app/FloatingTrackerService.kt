@@ -311,7 +311,97 @@ class FloatingTrackerService : Service() {
         return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
     }
 
-    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
+      private enum class CardSlot { TOP, LEFT, RIGHT, BOTTOM }
+
+    private fun processCenterBitmapForCards(centerBitmap: Bitmap) {
+        val detectedCards = mutableListOf<String>()
+
+        CardSlot.entries.forEach { slot ->
+            val slotCrop = cropCardSlot(centerBitmap, slot) ?: return@forEach
+            val hasCard = hasWhiteCardSurface(slotCrop)
+            if (hasCard) {
+                val suitSymbol = detectSuitColorGroup(slotCrop)
+                // Próximo passo: identificar rank ("2".."10", "J", "Q", "K", "A") + formato exato do naipe
+                if (suitSymbol != null) {
+                    detectedCards.add("?$suitSymbol")
+                }
+            }
+            slotCrop.recycle()
+        }
+
+        if (detectedCards.isNotEmpty()) {
+            showToast("Lido: ${detectedCards.joinToString(", ")}")
+        }
+    }
+
+    private fun cropCardSlot(center: Bitmap, slot: CardSlot): Bitmap? {
+        val w = center.width
+        val h = center.height
+        if (w <= 4 || h <= 4) return null
+
+        val (l, t, r, b) = when (slot) {
+            CardSlot.TOP -> QuadF(0.34f, 0.02f, 0.66f, 0.44f)
+            CardSlot.LEFT -> QuadF(0.04f, 0.34f, 0.42f, 0.68f)
+            CardSlot.RIGHT -> QuadF(0.58f, 0.34f, 0.96f, 0.68f)
+            CardSlot.BOTTOM -> QuadF(0.36f, 0.56f, 0.64f, 0.98f)
+        }
+
+        val left = (w * l).toInt().coerceIn(0, w - 1)
+        val top = (h * t).toInt().coerceIn(0, h - 1)
+        val right = (w * r).toInt().coerceIn(left + 1, w)
+        val bottom = (h * b).toInt().coerceIn(top + 1, h)
+        return Bitmap.createBitmap(center, left, top, right - left, bottom - top)
+    }
+
+    private data class QuadF(val l: Float, val t: Float, val r: Float, val b: Float)
+
+    private fun hasWhiteCardSurface(bitmap: Bitmap): Boolean {
+        var whitePixels = 0
+        var sampled = 0
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
+
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                sampled++
+                if (Color.red(c) > 215 && Color.green(c) > 215 && Color.blue(c) > 215) {
+                    whitePixels++
+                }
+            }
+        }
+        if (sampled == 0) return false
+        return (whitePixels.toFloat() / sampled.toFloat()) > 0.22f
+    }
+
+    private fun detectSuitColorGroup(bitmap: Bitmap): String? {
+        var redCount = 0
+        var darkCount = 0
+        val stepX = (bitmap.width / 28).coerceAtLeast(1)
+        val stepY = (bitmap.height / 28).coerceAtLeast(1)
+
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                val r = Color.red(c)
+                val g = Color.green(c)
+                val b = Color.blue(c)
+
+                if (r > 165 && g < 85 && b < 85) {
+                    redCount++
+                } else if (r < 65 && g < 65 && b < 65) {
+                    darkCount++
+                }
+            }
+        }
+
+        return when {
+            redCount >= darkCount && redCount > 8 -> "♥/♦"
+            darkCount > redCount && darkCount > 8 -> "♠/♣"
+            else -> null
+        }
+    }
+  private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
