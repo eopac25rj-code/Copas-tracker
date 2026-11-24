@@ -100,6 +100,7 @@ class FloatingTrackerService : Service() {
         createNotificationChannelIfNeeded()
         createFloatingWindow()
     }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_START_PROJECTION) {
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -999)
@@ -430,7 +431,6 @@ class FloatingTrackerService : Service() {
         val h = cardBitmap.height
         if (w < 8 || h < 8) return CardReadResult(null, null, null)
 
-        // Valor fica na parte superior esquerda/centro-topo; naipe logo abaixo no centro
         val topX = (w * 0.16f).toInt().coerceIn(0, w - 1)
         val topY = (h * 0.05f).toInt().coerceIn(0, h - 1)
         val topW = (w * 0.68f).toInt().coerceAtLeast(1).coerceAtMost(w - topX)
@@ -463,15 +463,14 @@ class FloatingTrackerService : Service() {
         val totalRed = redMid + redTop
         val totalDark = darkMid + darkTop
 
-        // Naipe vermelho: ♦ (losango largo no meio e estreito nas pontas) vs ♥ (topo largo/arredondado, base afunilada)
         if (totalRed >= totalDark && redMid >= 3) {
             val topHalfRed = bandCount(midZone, 0.0f, 0.45f, ::isRedInk)
             val midBandRed = bandCount(midZone, 0.35f, 0.65f, ::isRedInk)
             val botHalfRed = bandCount(midZone, 0.55f, 1.0f, ::isRedInk)
             val midWidthRatio = horizontalSpreadRatio(midZone, ::isRedInk)
+            val symmetryDiff = kotlin.math.abs(topHalfRed - botHalfRed).toFloat() /
+                (topHalfRed + botHalfRed).coerceAtLeast(1)
 
-            // No losango (♦), o meio é bem mais largo que em ♥ e a distribuição superior/inferior é simétrica
-            val symmetryDiff = kotlin.math.abs(topHalfRed - botHalfRed).toFloat() / (topHalfRed + botHalfRed).coerceAtLeast(1)
             return if (midWidthRatio > 0.42f || (symmetryDiff < 0.25f && midBandRed >= topHalfRed)) {
                 "♦"
             } else {
@@ -479,14 +478,12 @@ class FloatingTrackerService : Service() {
             }
         }
 
-        // Naipe preto: ♠ (topo pontudo/estreito, base mais larga com recorte) vs ♣ (3 lóbulos largos + haste)
         if (totalDark > totalRed && darkMid >= 3) {
             val upperDark = bandCount(midZone, 0.0f, 0.45f, ::isBlackInk)
             val lowerDark = bandCount(midZone, 0.55f, 1.0f, ::isBlackInk)
             val midWidthRatio = horizontalSpreadRatio(midZone, ::isBlackInk)
             val heightRatio = verticalSpreadRatio(midZone, ::isBlackInk)
 
-            // ♣ tem lóbulos laterais mais abertos na horizontal em relação à altura do que ♠
             return if (midWidthRatio > 0.44f && (lowerDark >= upperDark * 0.75f || heightRatio < 0.72f)) {
                 "♣"
             } else {
@@ -510,14 +507,11 @@ class FloatingTrackerService : Service() {
         val upperCount = bandCount(topZone, 0.0f, 0.45f, pred)
         val lowerCount = bandCount(topZone, 0.55f, 1.0f, pred)
 
-        // "10" ocupa largura horizontal bem maior por ter dois dígitos
         if (spreadX > 0.48f && spreadY > 0.40f) {
             return "10"
         }
 
-        // Letras: Q, K, J, A
         if (spreadX > 0.36f && spreadY > 0.45f) {
-            // Q tem base/corpo largo e fechado embaixo; K tem haste esquerda + diagonais
             if (lowerCount >= upperCount && vBalance in 0.40f..0.62f) {
                 return "Q"
             }
@@ -526,17 +520,14 @@ class FloatingTrackerService : Service() {
             }
         }
 
-        // A tem topo estreito (ponta) e base mais aberta
         if (spreadX <= 0.40f && upperCount < lowerCount && vBalance < 0.52f) {
             return "A"
         }
 
-        // J tem gancho na parte inferior (maior peso embaixo e largura moderada)
         if (spreadX <= 0.38f && lowerCount > upperCount && vBalance > 0.52f) {
             return "J"
         }
 
-        // Números com traço superior forte (ex.: 7) vs inferior forte (ex.: 9, 6)
         if (upperCount > lowerCount * 1.25f && spreadX < 0.40f) {
             return "7"
         }
@@ -545,7 +536,6 @@ class FloatingTrackerService : Service() {
             return if (activeCount >= 18) "9" else "6"
         }
 
-        // Distinção por densidade e abertura entre 2, 3, 4, 5, 8
         return when {
             spreadX > 0.35f && spreadY > 0.52f && activeCount >= 16 -> "8"
             activeCount >= 22 -> "5"
@@ -616,7 +606,37 @@ class FloatingTrackerService : Service() {
         var maxY = -1
         val stepX = (bitmap.width / 28).coerceAtLeast(1)
         val stepY = (bitmap.height / 28).coerceAtLeast(1)
-        
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (maxY <= minY || bitmap.height <= 0) return 0f
+        return ((maxY - minY).toFloat() / bitmap.height.toFloat()).coerceIn(0f, 1f)
+    }
+
+    private fun verticalBalanceRatio(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Float {
+        var topWeight = 0
+        var bottomWeight = 0
+        val midY = bitmap.height / 2
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    if (y < midY) topWeight++ else bottomWeight++
+                }
+            }
+        }
+        val total = topWeight + bottomWeight
+        if (total == 0) return 0.5f
+        return (bottomWeight.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    }
     private fun imageToBitmap(image: android.media.Image, width: Int, height: Int): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
@@ -883,6 +903,7 @@ class FloatingTrackerService : Service() {
         }
 
         body.addView(grid)
+
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
