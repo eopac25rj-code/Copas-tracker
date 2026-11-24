@@ -302,12 +302,12 @@ class FloatingTrackerService : Service() {
         }
     }
 
-    private fun cropCenterRegion(source: Bitmap): Bitmap? {
+        private fun cropCenterRegion(source: Bitmap): Bitmap? {
         if (source.width <= 1 || source.height <= 1) return null
-        val left = (source.width * 0.34f).toInt().coerceIn(0, source.width - 1)
-        val top = (source.height * 0.24f).toInt().coerceIn(0, source.height - 1)
-        val right = (source.width * 0.66f).toInt().coerceIn(left + 1, source.width)
-        val bottom = (source.height * 0.62f).toInt().coerceIn(top + 1, source.height)
+        val left = (source.width * 0.30f).toInt().coerceIn(0, source.width - 1)
+        val top = (source.height * 0.20f).toInt().coerceIn(0, source.height - 1)
+        val right = (source.width * 0.70f).toInt().coerceIn(left + 1, source.width)
+        val bottom = (source.height * 0.78f).toInt().coerceIn(top + 1, source.height)
         return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
     }
 
