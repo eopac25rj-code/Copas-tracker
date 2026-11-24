@@ -17,9 +17,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
@@ -31,9 +29,14 @@ import android.widget.TextView
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import java.util.concurrent.atomic.AtomicInteger
 
 class FloatingTrackerService : Service() {
+
+    companion object {
+        const val ACTION_START_PROJECTION = "com.copastracker.app.action.START_PROJECTION"
+        const val EXTRA_RESULT_CODE = "com.copastracker.app.extra.RESULT_CODE"
+        const val EXTRA_DATA_INTENT = "com.copastracker.app.extra.DATA_INTENT"
+    }
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingView: LinearLayout
@@ -48,7 +51,6 @@ class FloatingTrackerService : Service() {
     private var screenHeight = 1920
     private var screenDensity = 320
 
-    private val handler = Handler(Looper.getMainLooper())
     private val textRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
@@ -79,9 +81,21 @@ class FloatingTrackerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null && mediaProjection == null) {
-            val resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
+            val resultCode = when {
+                intent.hasExtra(EXTRA_RESULT_CODE) ->
+                    intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
+                else ->
+                    intent.getIntExtra("resultCode", Activity.RESULT_CANCELED)
+            }
+
             @Suppress("DEPRECATION")
-            val data: Intent? = intent.getParcelableExtra("data")
+            val data: Intent? = when {
+                intent.hasExtra(EXTRA_DATA_INTENT) ->
+                    intent.getParcelableExtra(EXTRA_DATA_INTENT)
+                else ->
+                    intent.getParcelableExtra("data")
+            }
+
             if (resultCode == Activity.RESULT_OK && data != null) {
                 val projectionManager =
                     getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -372,7 +386,6 @@ class FloatingTrackerService : Service() {
         val croppedScreen = Bitmap.createBitmap(fullBitmap, 0, 0, screenWidth, screenHeight)
         fullBitmap.recycle()
 
-        // Analisa a região central da mesa onde caem as cartas
         val tableLeft = (screenWidth * 0.20).toInt()
         val tableTop = (screenHeight * 0.28).toInt()
         val tableWidth = (screenWidth * 0.60).toInt()
