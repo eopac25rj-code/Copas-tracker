@@ -308,10 +308,10 @@ class FloatingTrackerService : Service() {
     }
     private fun cropCenterRegion(source: Bitmap): Bitmap? {
         if (source.width <= 1 || source.height <= 1) return null
-        val left = (source.width * 0.30f).toInt().coerceIn(0, source.width - 1)
-        val top = (source.height * 0.20f).toInt().coerceIn(0, source.height - 1)
-        val right = (source.width * 0.70f).toInt().coerceIn(left + 1, source.width)
-        val bottom = (source.height * 0.78f).toInt().coerceIn(top + 1, source.height)
+        val left = (source.width * 0.28f).toInt().coerceIn(0, source.width - 1)
+        val top = (source.height * 0.18f).toInt().coerceIn(0, source.height - 1)
+        val right = (source.width * 0.72f).toInt().coerceIn(left + 1, source.width)
+        val bottom = (source.height * 0.80f).toInt().coerceIn(top + 1, source.height)
         return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
     }
 
@@ -379,10 +379,10 @@ class FloatingTrackerService : Service() {
         if (w <= 4 || h <= 4) return null
 
         val (l, t, r, b) = when (slot) {
-            CardSlot.TOP -> QuadF(0.35f, 0.03f, 0.65f, 0.44f)
+            CardSlot.TOP -> QuadF(0.35f, 0.04f, 0.65f, 0.45f)
             CardSlot.LEFT -> QuadF(0.05f, 0.34f, 0.42f, 0.68f)
             CardSlot.RIGHT -> QuadF(0.58f, 0.34f, 0.95f, 0.68f)
-            CardSlot.BOTTOM -> QuadF(0.36f, 0.56f, 0.64f, 0.98f)
+            CardSlot.BOTTOM -> QuadF(0.36f, 0.55f, 0.64f, 0.98f)
         }
 
         val left = (w * l).toInt().coerceIn(0, w - 1)
@@ -421,19 +421,24 @@ class FloatingTrackerService : Service() {
         return sampled > 0 && (whitePixels.toFloat() / sampled.toFloat()) > 0.16f
     }
 
+    private fun isRedInk(r: Int, g: Int, b: Int): Boolean = r > 155 && g < 95 && b < 95
+
+    private fun isBlackInk(r: Int, g: Int, b: Int): Boolean = r < 80 && g < 80 && b < 80
+
     private fun recognizeCardDetails(cardBitmap: Bitmap): CardReadResult {
         val w = cardBitmap.width
         val h = cardBitmap.height
         if (w < 8 || h < 8) return CardReadResult(null, null, null)
 
-        val topX = (w * 0.20f).toInt().coerceIn(0, w - 1)
-        val topY = (h * 0.06f).toInt().coerceIn(0, h - 1)
-        val topW = (w * 0.60f).toInt().coerceAtLeast(1).coerceAtMost(w - topX)
-        val topH = (h * 0.38f).toInt().coerceAtLeast(1).coerceAtMost(h - topY)
+        // Valor fica na parte superior esquerda/centro-topo; naipe logo abaixo no centro
+        val topX = (w * 0.16f).toInt().coerceIn(0, w - 1)
+        val topY = (h * 0.05f).toInt().coerceIn(0, h - 1)
+        val topW = (w * 0.68f).toInt().coerceAtLeast(1).coerceAtMost(w - topX)
+        val topH = (h * 0.36f).toInt().coerceAtLeast(1).coerceAtMost(h - topY)
 
-        val midX = (w * 0.20f).toInt().coerceIn(0, w - 1)
-        val midY = (h * 0.40f).toInt().coerceIn(0, h - 1)
-        val midW = (w * 0.60f).toInt().coerceAtLeast(1).coerceAtMost(w - midX)
+        val midX = (w * 0.18f).toInt().coerceIn(0, w - 1)
+        val midY = (h * 0.41f).toInt().coerceIn(0, h - 1)
+        val midW = (w * 0.64f).toInt().coerceAtLeast(1).coerceAtMost(w - midX)
         val midH = (h * 0.42f).toInt().coerceAtLeast(1).coerceAtMost(h - midY)
 
         val topZone = Bitmap.createBitmap(cardBitmap, topX, topY, topW, topH)
@@ -450,56 +455,127 @@ class FloatingTrackerService : Service() {
     }
 
     private fun detectSuit(midZone: Bitmap, topZone: Bitmap): String? {
-        val redMid = countMatchingPixels(midZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
-        val darkMid = countMatchingPixels(midZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
-
-        val redTop = countMatchingPixels(topZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
-        val darkTop = countMatchingPixels(topZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
+        val redMid = countMatchingPixels(midZone, ::isRedInk)
+        val darkMid = countMatchingPixels(midZone, ::isBlackInk)
+        val redTop = countMatchingPixels(topZone, ::isRedInk)
+        val darkTop = countMatchingPixels(topZone, ::isBlackInk)
 
         val totalRed = redMid + redTop
         val totalDark = darkMid + darkTop
 
-        return if (totalRed >= totalDark && totalRed >= 3) {
-            val midWidthRatio = horizontalSpreadRatio(midZone) { r, g, b -> r > 150 && g < 95 && b < 95 }
-            if (midWidthRatio > 0.45f) "♦" else "♥"
-        } else if (totalDark > totalRed && totalDark >= 3) {
-            val midTopBottomBalance = verticalBalanceRatio(midZone) { r, g, b -> r < 85 && g < 85 && b < 85 }
-            if (midTopBottomBalance < 0.47f) "♠" else "♣"
-        } else {
-            null
+        // Naipe vermelho: ♦ (losango largo no meio e estreito nas pontas) vs ♥ (topo largo/arredondado, base afunilada)
+        if (totalRed >= totalDark && redMid >= 3) {
+            val topHalfRed = bandCount(midZone, 0.0f, 0.45f, ::isRedInk)
+            val midBandRed = bandCount(midZone, 0.35f, 0.65f, ::isRedInk)
+            val botHalfRed = bandCount(midZone, 0.55f, 1.0f, ::isRedInk)
+            val midWidthRatio = horizontalSpreadRatio(midZone, ::isRedInk)
+
+            // No losango (♦), o meio é bem mais largo que em ♥ e a distribuição superior/inferior é simétrica
+            val symmetryDiff = kotlin.math.abs(topHalfRed - botHalfRed).toFloat() / (topHalfRed + botHalfRed).coerceAtLeast(1)
+            return if (midWidthRatio > 0.42f || (symmetryDiff < 0.25f && midBandRed >= topHalfRed)) {
+                "♦"
+            } else {
+                "♥"
+            }
         }
+
+        // Naipe preto: ♠ (topo pontudo/estreito, base mais larga com recorte) vs ♣ (3 lóbulos largos + haste)
+        if (totalDark > totalRed && darkMid >= 3) {
+            val upperDark = bandCount(midZone, 0.0f, 0.45f, ::isBlackInk)
+            val lowerDark = bandCount(midZone, 0.55f, 1.0f, ::isBlackInk)
+            val midWidthRatio = horizontalSpreadRatio(midZone, ::isBlackInk)
+            val heightRatio = verticalSpreadRatio(midZone, ::isBlackInk)
+
+            // ♣ tem lóbulos laterais mais abertos na horizontal em relação à altura do que ♠
+            return if (midWidthRatio > 0.44f && (lowerDark >= upperDark * 0.75f || heightRatio < 0.72f)) {
+                "♣"
+            } else {
+                "♠"
+            }
+        }
+
+        return null
     }
 
     private fun detectRank(topZone: Bitmap, suit: String?): String? {
         val isRed = suit == "♥" || suit == "♦"
-        val matchFn: (Int, Int, Int) -> Boolean = if (isRed) {
-            { r, g, b -> r > 150 && g < 95 && b < 95 }
-        } else {
-            { r, g, b -> r < 85 && g < 85 && b < 85 }
-        }
+        val pred: (Int, Int, Int) -> Boolean = if (isRed) ::isRedInk else ::isBlackInk
 
-        val activeCount = countMatchingPixels(topZone, matchFn)
+        val activeCount = countMatchingPixels(topZone, pred)
         if (activeCount < 2) return null
 
-        val spreadX = horizontalSpreadRatio(topZone, matchFn)
-        val spreadY = verticalSpreadRatio(topZone, matchFn)
-        val vBalance = verticalBalanceRatio(topZone, matchFn)
+        val spreadX = horizontalSpreadRatio(topZone, pred)
+        val spreadY = verticalSpreadRatio(topZone, pred)
+        val vBalance = verticalBalanceRatio(topZone, pred)
+        val upperCount = bandCount(topZone, 0.0f, 0.45f, pred)
+        val lowerCount = bandCount(topZone, 0.55f, 1.0f, pred)
 
+        // "10" ocupa largura horizontal bem maior por ter dois dígitos
+        if (spreadX > 0.48f && spreadY > 0.40f) {
+            return "10"
+        }
+
+        // Letras: Q, K, J, A
+        if (spreadX > 0.36f && spreadY > 0.45f) {
+            // Q tem base/corpo largo e fechado embaixo; K tem haste esquerda + diagonais
+            if (lowerCount >= upperCount && vBalance in 0.40f..0.62f) {
+                return "Q"
+            }
+            if (vBalance > 0.46f) {
+                return "K"
+            }
+        }
+
+        // A tem topo estreito (ponta) e base mais aberta
+        if (spreadX <= 0.40f && upperCount < lowerCount && vBalance < 0.52f) {
+            return "A"
+        }
+
+        // J tem gancho na parte inferior (maior peso embaixo e largura moderada)
+        if (spreadX <= 0.38f && lowerCount > upperCount && vBalance > 0.52f) {
+            return "J"
+        }
+
+        // Números com traço superior forte (ex.: 7) vs inferior forte (ex.: 9, 6)
+        if (upperCount > lowerCount * 1.25f && spreadX < 0.40f) {
+            return "7"
+        }
+
+        if (lowerCount > upperCount * 1.25f) {
+            return if (activeCount >= 18) "9" else "6"
+        }
+
+        // Distinção por densidade e abertura entre 2, 3, 4, 5, 8
         return when {
-            spreadX > 0.52f && spreadY > 0.45f -> "10"
-            spreadX > 0.42f && vBalance in 0.40f..0.60f -> "Q"
-            spreadX > 0.40f && vBalance > 0.50f -> "K"
-            spreadX < 0.36f && vBalance > 0.50f -> "J"
-            spreadX < 0.40f && vBalance < 0.48f -> "A"
-            vBalance < 0.45f -> "7"
-            vBalance > 0.55f -> "9"
-            spreadX > 0.38f && spreadY > 0.45f -> "8"
-            activeCount > 35 -> "6"
-            activeCount > 24 -> "5"
-            activeCount > 16 -> "4"
-            activeCount > 9 -> "3"
+            spreadX > 0.35f && spreadY > 0.52f && activeCount >= 16 -> "8"
+            activeCount >= 22 -> "5"
+            activeCount >= 15 -> "4"
+            activeCount >= 9 -> "3"
             else -> "2"
         }
+    }
+
+    private fun bandCount(
+        bitmap: Bitmap,
+        startFrac: Float,
+        endFrac: Float,
+        predicate: (Int, Int, Int) -> Boolean
+    ): Int {
+        val yStart = (bitmap.height * startFrac).toInt().coerceIn(0, bitmap.height - 1)
+        val yEnd = (bitmap.height * endFrac).toInt().coerceIn(yStart + 1, bitmap.height)
+        var count = 0
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = ((yEnd - yStart) / 14).coerceAtLeast(1)
+
+        for (y in yStart until yEnd step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    count++
+                }
+            }
+        }
+        return count
     }
 
     private fun countMatchingPixels(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Int {
@@ -540,37 +616,7 @@ class FloatingTrackerService : Service() {
         var maxY = -1
         val stepX = (bitmap.width / 28).coerceAtLeast(1)
         val stepY = (bitmap.height / 28).coerceAtLeast(1)
-        for (y in 0 until bitmap.height step stepY) {
-            for (x in 0 until bitmap.width step stepX) {
-                val c = bitmap.getPixel(x, y)
-                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-            }
-        }
-        if (maxY <= minY || bitmap.height <= 0) return 0f
-        return ((maxY - minY).toFloat() / bitmap.height.toFloat()).coerceIn(0f, 1f)
-    }
-
-    private fun verticalBalanceRatio(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Float {
-        var topWeight = 0
-        var bottomWeight = 0
-        val midY = bitmap.height / 2
-        val stepX = (bitmap.width / 24).coerceAtLeast(1)
-        val stepY = (bitmap.height / 24).coerceAtLeast(1)
-        for (y in 0 until bitmap.height step stepY) {
-            for (x in 0 until bitmap.width step stepX) {
-                val c = bitmap.getPixel(x, y)
-                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
-                    if (y < midY) topWeight++ else bottomWeight++
-                }
-            }
-        }
-        val total = topWeight + bottomWeight
-        if (total == 0) return 0.5f
-        return (bottomWeight.toFloat() / total.toFloat()).coerceIn(0f, 1f)
-    }
+        
     private fun imageToBitmap(image: android.media.Image, width: Int, height: Int): Bitmap {
         val plane = image.planes[0]
         val buffer = plane.buffer
