@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -36,6 +37,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.abs
 
 class FloatingTrackerService : Service() {
 
@@ -69,6 +71,7 @@ class FloatingTrackerService : Service() {
 
     private val displayRanks = listOf("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
     private val displaySuits = listOf("♠", "♥", "♦", "♣")
+    private var lastSeenTrickCards = setOf<String>()
 
     private var pendingClearConfirmation = false
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -270,11 +273,9 @@ class FloatingTrackerService : Service() {
                             }
 
                             if (fullSaved != null && centerSaved != null) {
-                                lastCaptureStatus = "SALVO"
-                                showToast("Salvo mesa + recorte do centro!")
+                                lastCaptureStatus = "LIDO"
                             } else if (fullSaved != null) {
                                 lastCaptureStatus = "SALVO"
-                                showToast("Salvo: $fullSaved")
                             } else {
                                 lastCaptureStatus = "ERR_SAVE"
                                 showToast("Captura OK, mas falhou ao salvar imagem")
@@ -312,24 +313,46 @@ class FloatingTrackerService : Service() {
 
     private enum class CardSlot { TOP, LEFT, RIGHT, BOTTOM }
 
+    private data class QuadF(val l: Float, val t: Float, val r: Float, val b: Float)
+
     private fun processCenterBitmapForCards(centerBitmap: Bitmap) {
-        val detectedCards = mutableListOf<String>()
+        val currentTrickCards = mutableSetOf<String>()
 
         CardSlot.entries.forEach { slot ->
-            val slotCrop = cropCardSlot(centerBitmap, slot) ?: return@forEach
-            val hasCard = hasWhiteCardSurface(slotCrop)
-            if (hasCard) {
-                val suitSymbol = detectSuitColorGroup(slotCrop)
-                // Próximo passo: identificar rank ("2".."10", "J", "Q", "K", "A") + formato exato do naipe
-                if (suitSymbol != null) {
-                    detectedCards.add("?$suitSymbol")
+            val rawCrop = cropCardSlot(centerBitmap, slot) ?: return@forEach
+            val orientedCrop = normalizeSlotOrientation(rawCrop, slot)
+            if (orientedCrop != rawCrop) {
+                rawCrop.recycle()
+            }
+
+            if (hasWhiteCardSurface(orientedCrop)) {
+                val cardId = recognizeCardId(orientedCrop)
+                if (cardId != null) {
+                    currentTrickCards.add(cardId)
                 }
             }
-            slotCrop.recycle()
+            orientedCrop.recycle()
         }
 
-        if (detectedCards.isNotEmpty()) {
-            showToast("Lido: ${detectedCards.joinToString(", ")}")
+        if (currentTrickCards.isEmpty()) {
+            lastSeenTrickCards = emptySet()
+            return
+        }
+
+        val newCards = currentTrickCards.filter { it !in playedCards && it !in lastSeenTrickCards }
+        lastSeenTrickCards = currentTrickCards.toSet()
+
+        if (newCards.isNotEmpty()) {
+            pushUndoSnapshot()
+            playedCards.addAll(newCards)
+            cardStorage.savePlayedCards(playedCards)
+            for (id in newCards) {
+                updateCardButtonStyle(id)
+            }
+            updateCounterText()
+            showToast("Marcado: ${newCards.joinToString(", ")}")
+        } else {
+            showToast("Mesa: ${currentTrickCards.joinToString(", ")}")
         }
     }
 
@@ -339,9 +362,9 @@ class FloatingTrackerService : Service() {
         if (w <= 4 || h <= 4) return null
 
         val (l, t, r, b) = when (slot) {
-            CardSlot.TOP -> QuadF(0.34f, 0.02f, 0.66f, 0.44f)
-            CardSlot.LEFT -> QuadF(0.04f, 0.34f, 0.42f, 0.68f)
-            CardSlot.RIGHT -> QuadF(0.58f, 0.34f, 0.96f, 0.68f)
+            CardSlot.TOP -> QuadF(0.35f, 0.03f, 0.65f, 0.44f)
+            CardSlot.LEFT -> QuadF(0.05f, 0.34f, 0.42f, 0.68f)
+            CardSlot.RIGHT -> QuadF(0.58f, 0.34f, 0.95f, 0.68f)
             CardSlot.BOTTOM -> QuadF(0.36f, 0.56f, 0.64f, 0.98f)
         }
 
@@ -352,7 +375,16 @@ class FloatingTrackerService : Service() {
         return Bitmap.createBitmap(center, left, top, right - left, bottom - top)
     }
 
-    private data class QuadF(val l: Float, val t: Float, val r: Float, val b: Float)
+    private fun normalizeSlotOrientation(bitmap: Bitmap, slot: CardSlot): Bitmap {
+        val angle = when (slot) {
+            CardSlot.LEFT -> 90f
+            CardSlot.RIGHT -> 270f
+            else -> 0f
+        }
+        if (angle == 0f) return bitmap
+        val matrix = Matrix().apply { postRotate(angle) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
 
     private fun hasWhiteCardSurface(bitmap: Bitmap): Boolean {
         var whitePixels = 0
@@ -364,43 +396,165 @@ class FloatingTrackerService : Service() {
             for (x in 0 until bitmap.width step stepX) {
                 val c = bitmap.getPixel(x, y)
                 sampled++
-                if (Color.red(c) > 215 && Color.green(c) > 215 && Color.blue(c) > 215) {
+                if (Color.red(c) > 210 && Color.green(c) > 210 && Color.blue(c) > 210) {
                     whitePixels++
                 }
             }
         }
-        if (sampled == 0) return false
-        return (whitePixels.toFloat() / sampled.toFloat()) > 0.22f
+        return sampled > 0 && (whitePixels.toFloat() / sampled.toFloat()) > 0.20f
     }
 
-    private fun detectSuitColorGroup(bitmap: Bitmap): String? {
-        var redCount = 0
-        var darkCount = 0
-        val stepX = (bitmap.width / 28).coerceAtLeast(1)
-        val stepY = (bitmap.height / 28).coerceAtLeast(1)
+    private fun recognizeCardId(cardBitmap: Bitmap): String? {
+        val w = cardBitmap.width
+        val h = cardBitmap.height
+        if (w < 8 || h < 8) return null
 
+        val topZone = Bitmap.createBitmap(
+            cardBitmap,
+            (w * 0.25f).toInt().coerceIn(0, w - 1),
+            (h * 0.08f).toInt().coerceIn(0, h - 1),
+            (w * 0.50f).toInt().coerceAtLeast(1).coerceAtMost(w - (w * 0.25f).toInt()),
+            (h * 0.34f).toInt().coerceAtLeast(1).coerceAtMost(h - (h * 0.08f).toInt())
+        )
+        val midZone = Bitmap.createBitmap(
+            cardBitmap,
+            (w * 0.25f).toInt().coerceIn(0, w - 1),
+            (h * 0.42f).toInt().coerceIn(0, h - 1),
+            (w * 0.50f).toInt().coerceAtLeast(1).coerceAtMost(w - (w * 0.25f).toInt()),
+            (h * 0.38f).toInt().coerceAtLeast(1).coerceAtMost(h - (h * 0.42f).toInt())
+        )
+
+        val suit = detectSuit(midZone, topZone)
+        val rank = detectRank(topZone, suit)
+
+        topZone.recycle()
+        midZone.recycle()
+
+        return if (rank != null && suit != null) "$rank$suit" else null
+    }
+
+    private fun detectSuit(midZone: Bitmap, topZone: Bitmap): String? {
+        val redMid = countMatchingPixels(midZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
+        val darkMid = countMatchingPixels(midZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
+
+        val redTop = countMatchingPixels(topZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
+        val darkTop = countMatchingPixels(topZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
+
+        val totalRed = redMid + redTop
+        val totalDark = darkMid + darkTop
+
+        return if (totalRed >= totalDark && totalRed > 6) {
+            val midWidthRatio = horizontalSpreadRatio(midZone) { r, g, b -> r > 165 && g < 85 && b < 85 }
+            if (midWidthRatio > 0.48f) "♦" else "♥"
+        } else if (totalDark > totalRed && totalDark > 6) {
+            val midTopBottomBalance = verticalBalanceRatio(midZone) { r, g, b -> r < 65 && g < 65 && b < 65 }
+            if (midTopBottomBalance < 0.46f) "♠" else "♣"
+        } else {
+            null
+        }
+    }
+
+    private fun detectRank(topZone: Bitmap, suit: String?): String? {
+        val isRed = suit == "♥" || suit == "♦"
+        val matchFn: (Int, Int, Int) -> Boolean = if (isRed) {
+            { r, g, b -> r > 165 && g < 85 && b < 85 }
+        } else {
+            { r, g, b -> r < 65 && g < 65 && b < 65 }
+        }
+
+        val activeCount = countMatchingPixels(topZone, matchFn)
+        if (activeCount < 4) return null
+
+        val spreadX = horizontalSpreadRatio(topZone, matchFn)
+        val spreadY = verticalSpreadRatio(topZone, matchFn)
+        val vBalance = verticalBalanceRatio(topZone, matchFn)
+
+        return when {
+            spreadX > 0.56f && spreadY > 0.50f -> "10"
+            spreadX > 0.46f && vBalance in 0.42f..0.58f -> "Q"
+            spreadX > 0.44f && vBalance > 0.52f -> "K"
+            spreadX < 0.34f && vBalance > 0.52f -> "J"
+            spreadX < 0.38f && vBalance < 0.46f -> "A"
+            vBalance < 0.44f -> "7"
+            vBalance > 0.56f -> "9"
+            spreadX > 0.40f && spreadY > 0.48f -> "8"
+            activeCount > 45 -> "6"
+            activeCount > 32 -> "5"
+            activeCount > 22 -> "4"
+            activeCount > 14 -> "3"
+            else -> "2"
+        }
+    }
+
+    private fun countMatchingPixels(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Int {
+        var count = 0
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
         for (y in 0 until bitmap.height step stepY) {
             for (x in 0 until bitmap.width step stepX) {
                 val c = bitmap.getPixel(x, y)
-                val r = Color.red(c)
-                val g = Color.green(c)
-                val b = Color.blue(c)
-
-                if (r > 165 && g < 85 && b < 85) {
-                    redCount++
-                } else if (r < 65 && g < 65 && b < 65) {
-                    darkCount++
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    count++
                 }
             }
         }
-
-        return when {
-            redCount >= darkCount && redCount > 8 -> "♥/♦"
-            darkCount > redCount && darkCount > 8 -> "♠/♣"
-            else -> null
-        }
+        return count
     }
 
+    private fun horizontalSpreadRatio(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Float {
+        var minX = bitmap.width
+        var maxX = -1
+        val stepX = (bitmap.width / 28).coerceAtLeast(1)
+        val stepY = (bitmap.height / 28).coerceAtLeast(1)
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                }
+            }
+        }
+        if (maxX <= minX || bitmap.width <= 0) return 0f
+        return ((maxX - minX).toFloat() / bitmap.width.toFloat()).coerceIn(0f, 1f)
+    }
+
+    private fun verticalSpreadRatio(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Float {
+        var minY = bitmap.height
+        var maxY = -1
+        val stepX = (bitmap.width / 28).coerceAtLeast(1)
+        val stepY = (bitmap.height / 28).coerceAtLeast(1)
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (maxY <= minY || bitmap.height <= 0) return 0f
+        return ((maxY - minY).toFloat() / bitmap.height.toFloat()).coerceIn(0f, 1f)
+    }
+
+    private fun verticalBalanceRatio(bitmap: Bitmap, predicate: (Int, Int, Int) -> Boolean): Float {
+        var topWeight = 0
+        var bottomWeight = 0
+        val midY = bitmap.height / 2
+        val stepX = (bitmap.width / 24).coerceAtLeast(1)
+        val stepY = (bitmap.height / 24).coerceAtLeast(1)
+        for (y in 0 until bitmap.height step stepY) {
+            for (x in 0 until bitmap.width step stepX) {
+                val c = bitmap.getPixel(x, y)
+                if (predicate(Color.red(c), Color.green(c), Color.blue(c))) {
+                    if (y < midY) topWeight++ else bottomWeight++
+                }
+            }
+        }
+        val total = topWeight + bottomWeight
+        if (total == 0) return 0.5f
+        return (bottomWeight.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    }
     private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -510,6 +664,7 @@ class FloatingTrackerService : Service() {
             Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
         }
     }
+
     private fun createFloatingWindow() {
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
