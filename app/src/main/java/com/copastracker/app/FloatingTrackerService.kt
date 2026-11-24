@@ -65,6 +65,7 @@ class FloatingTrackerService : Service() {
     private var isProjectionCallbackRegistered = false
     private var isCapturingFrame = false
     private var lastCaptureStatus = "OFF"
+    private var lastDiagnosticText = ""
 
     private val displayRanks = listOf("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
     private val displaySuits = listOf("♠", "♥", "♦", "♣")
@@ -80,6 +81,7 @@ class FloatingTrackerService : Service() {
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             lastCaptureStatus = "PAROU"
+            lastDiagnosticText = "Parou"
             isCapturingFrame = false
             updateCounterText()
             stopProjectionResources()
@@ -112,6 +114,7 @@ class FloatingTrackerService : Service() {
                 startProjection(resultCode, dataIntent)
             } else {
                 lastCaptureStatus = "SEM_PERM"
+                lastDiagnosticText = "Code:$resultCode"
                 updateCounterText()
                 showToast("Permissão não devolveu dados (code=$resultCode)")
             }
@@ -154,6 +157,7 @@ class FloatingTrackerService : Service() {
             }
         } catch (e: Exception) {
             lastCaptureStatus = "ERR_FG"
+            lastDiagnosticText = e.javaClass.simpleName
             updateCounterText()
             showToast("Erro foreground: ${e.javaClass.simpleName}")
             return
@@ -173,6 +177,7 @@ class FloatingTrackerService : Service() {
             val mp = projectionManager.getMediaProjection(resultCode, dataIntent)
             if (mp == null) {
                 lastCaptureStatus = "MP_NULL"
+                lastDiagnosticText = "MP nulo"
                 updateCounterText()
                 showToast("MediaProjection veio nulo")
                 return
@@ -186,10 +191,12 @@ class FloatingTrackerService : Service() {
             mediaProjection = mp
             ensureVirtualDisplay(mp)
             lastCaptureStatus = "ON"
+            lastDiagnosticText = ""
             updateCounterText()
             showToast("Captura pronta! Toque em FOTO")
         } catch (e: Exception) {
             lastCaptureStatus = "ERR_MP"
+            lastDiagnosticText = e.javaClass.simpleName
             updateCounterText()
             showToast("Erro projeção: ${e.javaClass.simpleName}")
         }
@@ -234,6 +241,7 @@ class FloatingTrackerService : Service() {
         val mp = mediaProjection
         if (mp == null) {
             lastCaptureStatus = "OFF"
+            lastDiagnosticText = "Sem projecao"
             updateCounterText()
             showToast("Sem captura ativa! Abra o app e toque em Ativar Captura")
             return
@@ -244,6 +252,7 @@ class FloatingTrackerService : Service() {
 
         if (!ensureVirtualDisplay(mp)) {
             lastCaptureStatus = "VD_NULL"
+            lastDiagnosticText = "VD nulo"
             updateCounterText()
             showToast("VirtualDisplay retornou nulo")
             return
@@ -258,7 +267,7 @@ class FloatingTrackerService : Service() {
                 val reader = imageReader
                 if (reader == null) {
                     lastCaptureStatus = "SEM_READER"
-                    showToast("Leitor de imagem indisponível")
+                    lastDiagnosticText = "Reader nulo"
                     return@postDelayed
                 }
 
@@ -270,7 +279,7 @@ class FloatingTrackerService : Service() {
                     if (isBitmapMostlyBlack(bitmap)) {
                         bitmap.recycle()
                         lastCaptureStatus = "PRETA"
-                        showToast("Tela preta (bloqueado pelo jogo)")
+                        lastDiagnosticText = "Tela preta"
                     } else {
                         val centerBitmap = cropCenterRegion(bitmap)
                         bitmap.recycle()
@@ -281,16 +290,16 @@ class FloatingTrackerService : Service() {
                             lastCaptureStatus = "OK"
                         } else {
                             lastCaptureStatus = "ERR_CROP"
-                            showToast("Falha ao recortar centro")
+                            lastDiagnosticText = "Crop nulo"
                         }
                     }
                 } else {
                     lastCaptureStatus = "SEM_FRAME"
-                    showToast("Sem frame ainda, toque em FOTO de novo")
+                    lastDiagnosticText = "Sem frame"
                 }
             } catch (e: Exception) {
                 lastCaptureStatus = "ERR_FRAME"
-                showToast("Erro ao ler frame: ${e.javaClass.simpleName}")
+                lastDiagnosticText = "Err:${e.javaClass.simpleName}"
             } finally {
                 isCapturingFrame = false
                 updateCounterText()
@@ -337,7 +346,7 @@ class FloatingTrackerService : Service() {
 
         if (currentTrickCards.isEmpty()) {
             lastSeenTrickCards = emptySet()
-            showToast("Sem carta lida (branco=$whiteSlots, naipe=$suitFoundSlots, valor=$rankFoundSlots)")
+            lastDiagnosticText = "b=$whiteSlots n=$suitFoundSlots v=$rankFoundSlots"
             return
         }
 
@@ -352,9 +361,9 @@ class FloatingTrackerService : Service() {
                 updateCardButtonStyle(id)
             }
             updateCounterText()
-            showToast("Marcado: ${newCards.joinToString(", ")}")
+            lastDiagnosticText = "+${newCards.joinToString(",")}"
         } else {
-            showToast("Já marcado: ${currentTrickCards.joinToString(", ")}")
+            lastDiagnosticText = "ja:${currentTrickCards.joinToString(",")}"
         }
     }
 
@@ -1064,7 +1073,8 @@ class FloatingTrackerService : Service() {
 
     private fun updateCounterText() {
         val remaining = 52 - playedCards.size
-        counterTextView?.text = "Copas • $remaining/52 • $lastCaptureStatus"
+        val diag = if (lastDiagnosticText.isNotEmpty()) " • $lastDiagnosticText" else ""
+        counterTextView?.text = "Copas • $remaining/52 • $lastCaptureStatus$diag"
         for (suit in displaySuits) {
             suitCounterViews[suit]?.text = "$suit ${remainingForSuit(suit)}"
         }
