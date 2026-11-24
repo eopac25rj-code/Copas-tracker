@@ -96,7 +96,6 @@ class FloatingTrackerService : Service() {
         createNotificationChannelIfNeeded()
         createFloatingWindow()
     }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_START_PROJECTION) {
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -999)
@@ -262,6 +261,7 @@ class FloatingTrackerService : Service() {
                             bitmap.recycle()
 
                             val centerSaved = if (centerBitmap != null) {
+                                processCenterBitmapForCards(centerBitmap)
                                 val name = saveBitmapToGallery(centerBitmap, "centro_$stamp.png")
                                 centerBitmap.recycle()
                                 name
@@ -301,8 +301,7 @@ class FloatingTrackerService : Service() {
             showToast("Erro VD: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
-
-        private fun cropCenterRegion(source: Bitmap): Bitmap? {
+    private fun cropCenterRegion(source: Bitmap): Bitmap? {
         if (source.width <= 1 || source.height <= 1) return null
         val left = (source.width * 0.30f).toInt().coerceIn(0, source.width - 1)
         val top = (source.height * 0.20f).toInt().coerceIn(0, source.height - 1)
@@ -311,7 +310,7 @@ class FloatingTrackerService : Service() {
         return Bitmap.createBitmap(source, left, top, right - left, bottom - top)
     }
 
-      private enum class CardSlot { TOP, LEFT, RIGHT, BOTTOM }
+    private enum class CardSlot { TOP, LEFT, RIGHT, BOTTOM }
 
     private fun processCenterBitmapForCards(centerBitmap: Bitmap) {
         val detectedCards = mutableListOf<String>()
@@ -401,7 +400,8 @@ class FloatingTrackerService : Service() {
             else -> null
         }
     }
-  private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
+
+    private fun saveBitmapToGallery(bitmap: Bitmap, fileName: String): String? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -510,7 +510,6 @@ class FloatingTrackerService : Service() {
             Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
         }
     }
-
     private fun createFloatingWindow() {
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -714,7 +713,6 @@ class FloatingTrackerService : Service() {
         }
 
         body.addView(grid)
-
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
